@@ -1,7 +1,6 @@
 /**
- * Backup da música v2 (8 compassos, 128 BPM, Am–G–F–E | Am–C–F–G).
- * Extraída de index.ts antes da troca pela v3.
- * Não é importada em runtime — só referência para restaurar se precisar.
+ * Música v2 (8 compassos, 128 BPM, Am–G–F–E | Am–C–F–G).
+ * Usada na seleção de cartas do Deck Builder; a v3 (Arena Anthem) toca na partida.
  */
 
 const A2 = 110;

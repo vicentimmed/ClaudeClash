@@ -83,7 +83,7 @@ export class Game {
     // audio can only start from a real gesture
     const wake = () => {
       void this.audio.unlock().then(() => {
-        if (this.audio.musicOn) this.audio.startMusic();
+        if (this.audio.musicOn) this.audio.startMusic('deck');
       });
     };
     document.addEventListener('pointerdown', wake, { once: true });
@@ -107,6 +107,9 @@ export class Game {
     this.hint.style.display = 'none';
     // empty slots the very first time; the deck the player last played after that
     this.deckBuilder.open(loadSavedDeck() ?? []);
+    void this.audio.unlock().then(() => {
+      if (this.audio.musicOn) this.audio.startMusic('deck');
+    });
   }
 
   private startMatch(deck: string[]) {
@@ -117,7 +120,7 @@ export class Game {
     this.newMatch(deck);
     this.running = true;
     void this.audio.unlock().then(() => {
-      if (this.audio.musicOn) this.audio.startMusic();
+      if (this.audio.musicOn) this.audio.startMusic('battle');
     });
   }
 
