@@ -72,7 +72,9 @@ export class Game {
     this.deckBuilder = new DeckBuilder(this.balance, (cardId, size) => this.makeArt(cardId, size), {
       onStart: (deck) => this.startMatch(deck),
       onTap: () => this.audio.play('uiTap'),
+      onToggleSound: () => this.toggleSound(),
     });
+    this.deckBuilder.setSoundOn(this.audio.enabled);
 
     this.stage.addEventListener('pointerdown', (ev) => this.onStagePointer(ev));
 
@@ -163,7 +165,8 @@ export class Game {
     void this.audio.unlock().then(() => {
       const on = this.audio.toggleAll();
       this.ui.setSoundOn(on);
-      if (on) this.audio.startMusic();
+      this.deckBuilder.setSoundOn(on);
+      if (on) this.audio.startMusic(this.running ? 'battle' : 'deck');
       else this.audio.stopMusic();
       if (on) this.audio.play('uiTap');
     });

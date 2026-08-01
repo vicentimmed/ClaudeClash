@@ -9,9 +9,13 @@ const KIND_LABEL: Record<CardKind, string> = {
 
 const DRAG_THRESHOLD = 14;
 
+const ICON_SOUND_ON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+const ICON_SOUND_OFF = `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9l6 6M22 9l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+
 export interface DeckCallbacks {
   onStart: (deck: string[]) => void;
   onTap: () => void;
+  onToggleSound: () => void;
 }
 
 /**
@@ -26,6 +30,7 @@ export class DeckBuilder {
   private countEl!: HTMLElement;
   private avgEl!: HTMLElement;
   private playBtn!: HTMLButtonElement;
+  private soundBtn!: HTMLButtonElement;
 
   private slots: (string | undefined)[] = [];
   private poolCards: Array<{ id: string; el: HTMLButtonElement }> = [];
@@ -73,6 +78,7 @@ export class DeckBuilder {
         <strong>Seu deck</strong>
         <span class="deck-count" data-role="count"></span>
         <span class="deck-avg" data-role="avg"></span>
+        <button class="icon-btn square" data-role="sound" aria-label="Som"></button>
       </div>
       <div class="deck-slots" data-role="slots"></div>
       <div class="deck-sub">Toque para adicionar · arraste no deck para ordenar</div>
@@ -89,6 +95,9 @@ export class DeckBuilder {
     this.countEl = q('count');
     this.avgEl = q('avg');
     this.playBtn = q<HTMLButtonElement>('play');
+    this.soundBtn = q<HTMLButtonElement>('sound');
+
+    this.soundBtn.addEventListener('click', () => this.cb.onToggleSound());
 
     q<HTMLButtonElement>('random').addEventListener('click', () => {
       this.cb.onTap();
@@ -354,6 +363,11 @@ export class DeckBuilder {
   }
 
   // ----------------------------------------------------------------- public
+
+  setSoundOn(on: boolean) {
+    this.soundBtn.innerHTML = on ? ICON_SOUND_ON : ICON_SOUND_OFF;
+    this.soundBtn.classList.toggle('off', !on);
+  }
 
   setBalance(balance: Balance) {
     this.balance = balance;

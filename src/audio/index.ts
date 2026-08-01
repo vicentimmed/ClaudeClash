@@ -6,11 +6,11 @@
  * click/touch handler before expecting anything audible.
  */
 
-import { MUSIC_V2_BACKUP } from './music-v2-backup';
+import { MUSIC_DECK } from './music-deck';
 
 const STORAGE_KEY = 'claudeclash.audio.v1';
 
-/** v3 Arena Anthem during matches; v2 menu theme in the deck builder. */
+/** Arena Anthem (v3) na partida; Card Lounge no deck builder. */
 export type MusicTrack = 'battle' | 'deck';
 
 export type SfxName =
@@ -115,11 +115,6 @@ const COUNTER: (number | null)[] = [
 const BASS_PATTERN: (number | null)[] = [-12, null, -12, -5, -12, null, -12, 0];
 
 const BATTLE_STEPS_PER_LOOP = 128;
-
-const DECK_PROGRESSION = MUSIC_V2_BACKUP.PROGRESSION;
-const DECK_MELODY = MUSIC_V2_BACKUP.MELODY;
-const DECK_STEPS_PER_LOOP = MUSIC_V2_BACKUP.stepsPerLoop;
-const DECK_ARP = [0, 2, 1, 3, 2, 0, 3, 1];
 
 export class GameAudio {
   private ctx: AudioContext | null = null;
@@ -258,129 +253,123 @@ export class GameAudio {
   }
 
   private get stepDur() {
-    return this.track === 'deck' ? 60 / MUSIC_V2_BACKUP.bpm / 2 : 60 / 136 / 2;
+    return this.track === 'deck' ? 60 / MUSIC_DECK.bpm / 2 : 60 / 136 / 2;
   }
 
   private get stepsPerLoop() {
-    return this.track === 'deck' ? DECK_STEPS_PER_LOOP : BATTLE_STEPS_PER_LOOP;
+    return this.track === 'deck' ? MUSIC_DECK.stepsPerLoop : BATTLE_STEPS_PER_LOOP;
   }
 
-  /** v2 — calmer loop for the deck builder. */
+  /** Card Lounge — jazz lo-fi para montar o deck. */
   private scheduleDeckStep(step: number, when: number) {
-    const bar = Math.floor(step / 8) % DECK_PROGRESSION.length;
+    const vol = 1.75;
+    const bar = Math.floor(step / 8) % MUSIC_DECK.PROGRESSION.length;
     const beat = step % 8;
-    const chord = DECK_PROGRESSION[bar];
-    const build = bar >= 6;
+    const chord = MUSIC_DECK.PROGRESSION[bar];
     const stepDur = this.stepDur;
 
-    if (beat % 2 === 0) {
-      const bassOff = build && (beat === 2 || beat === 6) ? -5 : -12;
-      this.tone({
-        freq: note(chord.root + bassOff),
-        when,
-        dur: beat === 0 || beat === 4 ? 0.24 : 0.14,
-        type: 'triangle',
-        gain: beat === 0 || beat === 4 ? 0.45 : 0.28,
-        bus: this.musicBus,
-      });
-    }
-
-    if (beat === 0) {
-      this.tone({
-        freq: note(chord.root),
-        when,
-        dur: stepDur * 8,
-        type: 'sawtooth',
-        gain: 0.06,
-        attack: 0.1,
-        bus: this.musicBus,
-      });
-      this.tone({
-        freq: note(chord.root + 7),
-        when,
-        dur: stepDur * 8,
-        type: 'sawtooth',
-        gain: 0.045,
-        attack: 0.12,
-        bus: this.musicBus,
-      });
-      this.tone({
-        freq: note(chord.root + 12),
-        when,
-        dur: 0.12,
-        type: 'square',
-        gain: 0.1,
-        bus: this.musicBus,
-      });
-    }
-
-    const arpIdx = DECK_ARP[beat];
-    this.tone({
-      freq: note(chord.triad[arpIdx] + 12),
-      when,
-      dur: 0.11,
-      type: 'square',
-      gain: beat % 2 === 0 ? 0.07 : 0.05,
-      bus: this.musicBus,
-    });
-
-    const mel = DECK_MELODY[step % DECK_MELODY.length];
-    if (mel !== null) {
-      this.tone({
-        freq: note(mel),
-        when,
-        dur: 0.2,
-        type: 'triangle',
-        gain: 0.16,
-        bus: this.musicBus,
-      });
-      if (bar >= 4) {
+    // Rhodes suave nos offbeats (swing leve)
+    if (beat === 2 || beat === 6) {
+      for (const semi of [chord.triad[0], chord.triad[1], chord.triad[2]]) {
         this.tone({
-          freq: note(mel + 12),
+          freq: note(semi + 12),
           when,
-          dur: 0.18,
+          dur: stepDur * 3,
           type: 'sine',
-          gain: 0.06,
+          gain: 0.042 * vol,
+          attack: 0.05,
+          bus: this.musicBus,
+        });
+      }
+      if (chord.triad[3] !== undefined) {
+        this.tone({
+          freq: note(chord.triad[3] + 12),
+          when,
+          dur: stepDur * 3,
+          type: 'sine',
+          gain: 0.028 * vol,
+          attack: 0.06,
           bus: this.musicBus,
         });
       }
     }
 
-    if (beat === 0 || beat === 4) {
-      this.noise({ when, dur: 0.11, gain: 0.24, filter: 180, bus: this.musicBus });
+    // Pad quente no início do compasso
+    if (beat === 0) {
       this.tone({
-        freq: 95,
+        freq: note(chord.root),
         when,
-        dur: 0.11,
+        dur: stepDur * 8,
         type: 'sine',
-        gain: 0.35,
-        slideTo: 42,
+        gain: 0.032 * vol,
+        attack: 0.3,
         bus: this.musicBus,
       });
     }
-    if (beat === 4 || (build && beat === 6)) {
+
+    // Contrabaixo melódico — compasso inteiro, nota por bar
+    if (beat === 0) {
+      this.tone({
+        freq: note(MUSIC_DECK.BASS[bar] - 12),
+        when,
+        dur: stepDur * 7,
+        type: 'sine',
+        gain: 0.14 * vol,
+        attack: 0.04,
+        bus: this.musicBus,
+      });
+    }
+
+    // Vibraphone — melodia espaçada
+    const mel = MUSIC_DECK.MELODY[step % MUSIC_DECK.MELODY.length];
+    if (mel !== null) {
+      this.tone({
+        freq: note(mel),
+        when,
+        dur: 0.38,
+        type: 'sine',
+        gain: 0.11 * vol,
+        attack: 0.025,
+        bus: this.musicBus,
+      });
+      this.tone({
+        freq: note(mel) * 1.003,
+        when: when + 0.07,
+        dur: 0.32,
+        type: 'sine',
+        gain: 0.045 * vol,
+        attack: 0.04,
+        bus: this.musicBus,
+      });
+    }
+
+    // Escovinha suave nos offbeats
+    if (beat === 2 || beat === 6) {
       this.noise({
         when,
-        dur: 0.09,
-        gain: 0.18,
-        filter: 3200,
-        sweepTo: 800,
+        dur: 0.055,
+        gain: 0.038 * vol,
+        filter: 2400,
+        sweepTo: 1100,
         bus: this.musicBus,
       });
     }
-    if (beat % 2 === 1) {
-      this.noise({ when, dur: 0.03, gain: 0.05, filter: 7000, bus: this.musicBus });
-    }
-    if (bar === 7 && beat >= 4) {
-      this.noise({ when, dur: 0.04, gain: 0.1, filter: 3500, bus: this.musicBus });
+
+    // Kick bem leve a cada dois compassos
+    if (beat === 0 && bar % 2 === 0) {
       this.tone({
-        freq: note(chord.triad[beat % 4] + 24),
+        freq: 58,
         when,
-        dur: 0.07,
-        type: 'square',
-        gain: 0.08,
+        dur: 0.14,
+        type: 'sine',
+        gain: 0.07 * vol,
         bus: this.musicBus,
       });
+    }
+
+    // Shaker nos tempos fracos
+    if (beat % 2 === 1) {
+      this.noise({ when, dur: 0.012, gain: 0.016 * vol, filter: 8800, bus: this.musicBus });
     }
   }
 
