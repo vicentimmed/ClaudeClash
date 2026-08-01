@@ -34,6 +34,38 @@ const WOOD = 0x8a5f3d;
 const STEEL = 0xc9d2da;
 const DARK_EYE = 0x241c14;
 
+export interface DrawUnitOpts {
+  animT?: number;
+  charging?: boolean;
+  swing?: number;
+}
+
+/** One skeleton with feet anchored at (cx, cy). */
+function drawSingleSkeletonAt(
+  g: Graphics,
+  h: number,
+  bodyHex: string,
+  accentHex: string,
+  cx: number,
+  cy: number,
+) {
+  const body = hexToNum(bodyHex);
+  const accent = hexToNum(accentHex);
+  g.rect(cx - h * 0.11, cy - h * 0.26, h * 0.055, h * 0.26).fill(shade(body, -0.18));
+  g.rect(cx + h * 0.055, cy - h * 0.26, h * 0.055, h * 0.26).fill(shade(body, -0.18));
+  g.roundRect(cx - h * 0.14, cy - h * 0.58, h * 0.28, h * 0.33, h * 0.06).fill(body);
+  const rib = hexToNum(accentHex);
+  g.rect(cx - h * 0.14, cy - h * 0.52, h * 0.28, h * 0.028).fill(rib);
+  g.rect(cx - h * 0.14, cy - h * 0.45, h * 0.28, h * 0.028).fill(rib);
+  g.rect(cx - h * 0.14, cy - h * 0.38, h * 0.28, h * 0.028).fill(rib);
+  g.rect(cx - h * 0.2, cy - h * 0.56, h * 0.06, h * 0.24).fill(body);
+  g.rect(cx + h * 0.14, cy - h * 0.56, h * 0.06, h * 0.24).fill(body);
+  g.circle(cx, cy - h * 0.73, h * 0.165).fill(body);
+  g.rect(cx - h * 0.075, cy - h * 0.67, h * 0.15, h * 0.08).fill(body);
+  g.circle(cx - h * 0.06, cy - h * 0.75, h * 0.045).fill(DARK_EYE);
+  g.circle(cx + h * 0.06, cy - h * 0.75, h * 0.045).fill(DARK_EYE);
+}
+
 /**
  * Every unit is drawn procedurally with its feet at (0, 0) and its body
  * extending upward into negative y. `h` is the full height in pixels.
@@ -45,6 +77,7 @@ export function drawUnit(
   bodyHex: string,
   accentHex: string,
   team?: number,
+  opts?: DrawUnitOpts,
 ) {
   const body = hexToNum(bodyHex);
   const accent = hexToNum(accentHex);
@@ -85,19 +118,26 @@ export function drawUnit(
     }
 
     case 'skeleton': {
-      g.rect(-h * 0.11, -h * 0.26, h * 0.055, h * 0.26).fill(shade(body, -0.18));
-      g.rect(h * 0.055, -h * 0.26, h * 0.055, h * 0.26).fill(shade(body, -0.18));
-      g.roundRect(-h * 0.14, -h * 0.58, h * 0.28, h * 0.33, h * 0.06).fill(body);
-      const rib = hexToNum(accentHex);
-      g.rect(-h * 0.14, -h * 0.52, h * 0.28, h * 0.028).fill(rib);
-      g.rect(-h * 0.14, -h * 0.45, h * 0.28, h * 0.028).fill(rib);
-      g.rect(-h * 0.14, -h * 0.38, h * 0.28, h * 0.028).fill(rib);
-      g.rect(-h * 0.2, -h * 0.56, h * 0.06, h * 0.24).fill(body);
-      g.rect(h * 0.14, -h * 0.56, h * 0.06, h * 0.24).fill(body);
-      g.circle(0, -h * 0.73, h * 0.165).fill(body);
-      g.rect(-h * 0.075, -h * 0.67, h * 0.15, h * 0.08).fill(body);
-      g.circle(-h * 0.06, -h * 0.75, h * 0.045).fill(DARK_EYE);
-      g.circle(h * 0.06, -h * 0.75, h * 0.045).fill(DARK_EYE);
+      drawSingleSkeletonAt(g, h, bodyHex, accentHex, 0, 0);
+      break;
+    }
+
+    case 'skeleton_army': {
+      // Card icon: swarm of skeletons (arena units render as single skeleton).
+      const swarm: Array<[number, number, number]> = [
+        [-0.44, 0.02, 0.5],
+        [0.44, 0.02, 0.5],
+        [-0.24, -0.06, 0.46],
+        [0.24, -0.06, 0.46],
+        [0, -0.16, 0.54],
+        [-0.58, -0.12, 0.42],
+        [0.58, -0.12, 0.42],
+        [-0.1, -0.34, 0.4],
+        [0.1, -0.34, 0.4],
+      ];
+      for (const [ox, oy, sc] of swarm) {
+        drawSingleSkeletonAt(g, h * sc, bodyHex, accentHex, ox * h, oy * h);
+      }
       break;
     }
 
@@ -286,6 +326,184 @@ export function drawUnit(
       break;
     }
 
+    case 'prince': {
+      const animT = opts?.animT ?? 0;
+      const charging = !!opts?.charging;
+      const swing = opts?.swing ?? 0;
+      const teamColor = team !== undefined ? TEAM_COLOR[team] : 0x3b7dd8;
+      const horse = hexToNum(accentHex);
+      const horseDark = shade(horse, -0.28);
+      const horseLight = shade(horse, 0.12);
+      const gold = body;
+      const goldDark = shade(body, -0.32);
+      const goldLight = shade(body, 0.18);
+      const gallop = charging ? animT * 13 : animT * 4.2;
+      const legLift = Math.sin(gallop) * h * 0.09;
+      const legLift2 = Math.sin(gallop + Math.PI) * h * 0.09;
+      const w = h * 0.58;
+
+      // shadow hooves / legs (back pair)
+      g.roundRect(-w * 0.34 + legLift2 * 0.3, -h * 0.22, w * 0.11, h * 0.22, h * 0.03).fill(horseDark);
+      g.roundRect(-w * 0.1 + legLift * 0.3, -h * 0.22, w * 0.11, h * 0.22, h * 0.03).fill(horseDark);
+      // front legs
+      g.roundRect(w * 0.14 - legLift * 0.3, -h * 0.22, w * 0.11, h * 0.22, h * 0.03).fill(horseDark);
+      g.roundRect(w * 0.38 - legLift2 * 0.3, -h * 0.22, w * 0.11, h * 0.22, h * 0.03).fill(horseDark);
+      // hooves
+      g.roundRect(-w * 0.34 + legLift2 * 0.3, -h * 0.05, w * 0.12, h * 0.05, h * 0.015).fill(0x3a2a1c);
+      g.roundRect(-w * 0.1 + legLift * 0.3, -h * 0.05, w * 0.12, h * 0.05, h * 0.015).fill(0x3a2a1c);
+      g.roundRect(w * 0.14 - legLift * 0.3, -h * 0.05, w * 0.12, h * 0.05, h * 0.015).fill(0x3a2a1c);
+      g.roundRect(w * 0.38 - legLift2 * 0.3, -h * 0.05, w * 0.12, h * 0.05, h * 0.015).fill(0x3a2a1c);
+
+      // horse body — compact shetland pony
+      g.ellipse(-w * 0.02, -h * 0.38, w * 0.52, h * 0.19).fill(horse);
+      g.ellipse(-w * 0.06, -h * 0.4, w * 0.38, h * 0.12).fill(horseLight);
+      // belly shadow
+      g.ellipse(-w * 0.02, -h * 0.3, w * 0.4, h * 0.08).fill(horseDark);
+
+      // tail
+      g.poly([
+        -w * 0.48, -h * 0.36,
+        -w * 0.62, -h * 0.28,
+        -w * 0.56, -h * 0.44,
+        -w * 0.46, -h * 0.42,
+      ]).fill(horseDark);
+
+      // horse neck + head
+      g.ellipse(w * 0.38, -h * 0.44, w * 0.16, h * 0.13).fill(horse);
+      g.circle(w * 0.5, -h * 0.5, h * 0.11).fill(horseLight);
+      g.circle(w * 0.54, -h * 0.51, h * 0.018).fill(DARK_EYE);
+      // muzzle
+      g.ellipse(w * 0.58, -h * 0.47, h * 0.05, h * 0.035).fill(horseLight);
+      g.circle(w * 0.61, -h * 0.465, h * 0.012).fill(horseDark);
+      // mane
+      g.poly([
+        w * 0.28, -h * 0.48,
+        w * 0.22, -h * 0.62,
+        w * 0.34, -h * 0.54,
+        w * 0.36, -h * 0.44,
+      ]).fill(horseDark);
+      g.poly([
+        w * 0.24, -h * 0.52,
+        w * 0.18, -h * 0.66,
+        w * 0.3, -h * 0.58,
+      ]).fill(horseDark);
+
+      // team-colored bridle + reins
+      g.moveTo(w * 0.5, -h * 0.52)
+        .lineTo(w * 0.08, -h * 0.58)
+        .stroke({ width: h * 0.018, color: teamColor });
+      g.arc(w * 0.52, -h * 0.48, h * 0.07, -0.5, 1.2).stroke({ width: h * 0.016, color: teamColor });
+
+      // saddle blanket (team color)
+      g.roundRect(-w * 0.18, -h * 0.52, w * 0.36, h * 0.12, h * 0.03).fill(teamColor);
+      g.roundRect(-w * 0.14, -h * 0.5, w * 0.28, h * 0.07, h * 0.02).fill(shade(teamColor, 0.15));
+      // saddle horn / seat
+      g.roundRect(-w * 0.1, -h * 0.58, w * 0.2, h * 0.08, h * 0.025).fill(goldDark);
+
+      // rider legs / stirrups
+      g.rect(-w * 0.08, -h * 0.58, w * 0.07, h * 0.18).fill(goldDark);
+      g.rect(w * 0.02, -h * 0.58, w * 0.07, h * 0.18).fill(goldDark);
+      g.rect(-w * 0.1, -h * 0.42, w * 0.1, h * 0.04).fill(0x3a2a1c);
+      g.rect(w * 0.0, -h * 0.42, w * 0.1, h * 0.04).fill(0x3a2a1c);
+
+      // armored torso
+      g.roundRect(-w * 0.16, -h * 0.78, w * 0.32, h * 0.24, h * 0.06).fill(gold);
+      g.roundRect(-w * 0.12, -h * 0.76, w * 0.24, h * 0.18, h * 0.04).fill(goldLight);
+      // chest plate ridge
+      g.rect(-w * 0.04, -h * 0.76, w * 0.08, h * 0.16).fill(goldDark);
+      // belt (team color)
+      g.rect(-w * 0.16, -h * 0.58, w * 0.32, h * 0.05).fill(teamColor);
+      g.rect(-w * 0.04, -h * 0.57, w * 0.08, h * 0.07).fill(shade(teamColor, -0.2));
+
+      // pauldrons
+      g.circle(-w * 0.2, -h * 0.74, h * 0.07).fill(gold);
+      g.circle(w * 0.2, -h * 0.74, h * 0.07).fill(gold);
+      g.circle(-w * 0.2, -h * 0.74, h * 0.04).fill(goldLight);
+      g.circle(w * 0.2, -h * 0.74, h * 0.04).fill(goldLight);
+
+      // arm holding lance
+      g.roundRect(w * 0.08, -h * 0.72, w * 0.14, h * 0.06, h * 0.02).fill(gold);
+      g.circle(w * 0.2, -h * 0.69, h * 0.045).fill(SKIN);
+
+      // lance angle: upright when walking, forward when charging/attacking
+      const thrust = Math.max(0, swing) ** 2;
+      const lanceAngle = charging
+        ? -0.12 - thrust * 0.35
+        : thrust > 0
+          ? -0.35 - thrust * 0.55
+          : -1.05;
+      const lanceLen = h * 0.88;
+      const handX = w * 0.18;
+      const handY = -h * 0.7;
+      const tipX = handX + Math.cos(lanceAngle) * lanceLen;
+      const tipY = handY + Math.sin(lanceAngle) * lanceLen;
+      const perpX = Math.cos(lanceAngle + Math.PI / 2) * h * 0.022;
+      const perpY = Math.sin(lanceAngle + Math.PI / 2) * h * 0.022;
+
+      // lance shaft with team-color stripes
+      g.poly([
+        handX + perpX, handY + perpY,
+        handX - perpX, handY - perpY,
+        tipX - perpX, tipY - perpY,
+        tipX + perpX, tipY + perpY,
+      ]).fill(0xe8e2d0);
+      const stripeN = 5;
+      for (let i = 1; i < stripeN; i++) {
+        const t = i / stripeN;
+        const sx = handX + (tipX - handX) * t;
+        const sy = handY + (tipY - handY) * t;
+        const c = i % 2 === 0 ? teamColor : 0xe8e2d0;
+        g.moveTo(sx + perpX, sy + perpY)
+          .lineTo(sx - perpX, sy - perpY)
+          .stroke({ width: h * 0.038, color: c });
+      }
+      // lance tip
+      g.poly([
+        tipX, tipY,
+        tipX - Math.cos(lanceAngle) * h * 0.12 - perpX * 1.4, tipY - Math.sin(lanceAngle) * h * 0.12 - perpY * 1.4,
+        tipX - Math.cos(lanceAngle) * h * 0.12 + perpX * 1.4, tipY - Math.sin(lanceAngle) * h * 0.12 + perpY * 1.4,
+      ]).fill(STEEL);
+      // ribbon on lance base
+      g.circle(handX, handY, h * 0.035).fill(teamColor);
+
+      // helmet
+      g.roundRect(-w * 0.14, -h * 0.96, w * 0.28, h * 0.2, h * 0.06).fill(gold);
+      g.roundRect(-w * 0.1, -h * 0.94, w * 0.2, h * 0.14, h * 0.04).fill(goldLight);
+      // visor slit
+      g.roundRect(-w * 0.08, -h * 0.9, w * 0.16, h * 0.04, h * 0.015).fill(0x2a2218);
+      // helmet crest ridge
+      g.poly([-w * 0.06, -h * 0.98, w * 0.06, -h * 0.98, 0, -h * 1.04]).fill(goldDark);
+      // team feather plume
+      g.poly([
+        0, -h * 1.04,
+        h * 0.04, -h * 1.18,
+        -h * 0.02, -h * 1.14,
+        h * 0.02, -h * 1.22,
+        -h * 0.04, -h * 1.08,
+      ]).fill(teamColor);
+      g.poly([
+        0, -h * 1.04,
+        h * 0.03, -h * 1.12,
+        -h * 0.01, -h * 1.1,
+      ]).fill(shade(teamColor, 0.25));
+
+      // goatee + mustache below visor
+      g.ellipse(0, -h * 0.84, h * 0.055, h * 0.04).fill(horseDark);
+      g.ellipse(-h * 0.04, -h * 0.855, h * 0.035, h * 0.018).fill(horseDark);
+      g.ellipse(h * 0.04, -h * 0.855, h * 0.035, h * 0.018).fill(horseDark);
+
+      // charge dust puffs
+      if (charging) {
+        const dust = shade(horse, 0.3);
+        g.circle(-w * 0.5 + Math.sin(animT * 16) * h * 0.04, -h * 0.06, h * 0.035).fill({
+          color: dust,
+          alpha: 0.45,
+        });
+        g.circle(-w * 0.62, -h * 0.04, h * 0.025).fill({ color: dust, alpha: 0.3 });
+      }
+      break;
+    }
+
     case 'minion': {
       g.ellipse(0, -h * 0.46, h * 0.21, h * 0.24).fill(body);
       g.poly([-h * 0.18, -h * 0.58, -h * 0.62, -h * 0.78, -h * 0.16, -h * 0.36]).fill(shade(body, -0.22));
@@ -380,6 +598,19 @@ export function drawUnit(
         -h * 0.018, -h * 0.86,
         0, -h * 0.86,
       ]).fill(0xfffbe0);
+      break;
+    }
+
+    case 'tombstone': {
+      const w = h * 0.5;
+      g.roundRect(-w * 0.55, -h * 0.08, w * 1.1, h * 0.08, h * 0.02).fill(shade(body, -0.25));
+      g.roundRect(-w * 0.38, -h * 0.72, w * 0.76, h * 0.66, h * 0.06).fill(body);
+      g.roundRect(-w * 0.32, -h * 0.66, w * 0.64, h * 0.54, h * 0.04).fill(shade(body, 0.1));
+      g.roundRect(-w * 0.38, -h * 0.72, w * 0.76, h * 0.1, h * 0.03).fill(shade(body, -0.15));
+      g.circle(0, -h * 0.48, h * 0.12).fill(hexToNum(accentHex));
+      g.circle(-h * 0.04, -h * 0.5, h * 0.025).fill(DARK_EYE);
+      g.circle(h * 0.04, -h * 0.5, h * 0.025).fill(DARK_EYE);
+      g.rect(-h * 0.02, -h * 0.42, h * 0.04, h * 0.06).fill(shade(accentHex, -0.2));
       break;
     }
 

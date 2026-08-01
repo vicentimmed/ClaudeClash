@@ -288,7 +288,14 @@ export class Renderer {
       view.shadow
         .ellipse(0, 0, e.radius * T * 1.15, e.radius * T * 0.6)
         .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: 0.85 });
-      drawUnit(view.body, card.visual.shape, h, card.visual.body, card.visual.accent, e.team);
+      drawUnit(
+        view.body,
+        e.cardId === 'skeleton_army' ? 'skeleton' : card.visual.shape,
+        h,
+        card.visual.body,
+        card.visual.accent,
+        e.team,
+      );
       view.lastHidden = e.cardId === 'tesla' && !!e.hidden;
       if (e.cardId === 'tesla') {
         this.syncTeslaTrapdoor(view, e, world, h);
@@ -441,6 +448,15 @@ export class Renderer {
           }
         }
       }
+      if (e.cardId === 'prince') {
+        const th = card.visual.scale * T;
+        view.body.clear();
+        drawUnit(view.body, 'prince', th, card.visual.body, card.visual.accent, e.team, {
+          animT: e.animT,
+          charging: !!e.charging,
+          swing: Math.max(0, e.swing),
+        });
+      }
       if (e.kind === 'tower') {
         bob.position.y = Math.max(0, e.swing) ** 2 * T * 0.1;
       } else {
@@ -460,6 +476,14 @@ export class Renderer {
           if (e.flying || card?.visual.shape === 'witch') {
             bobY -= Math.sin(e.animT * 3.4) * T * 0.09;
             bob.rotation = Math.sin(e.animT * 3.4) * 0.04;
+          } else if (e.cardId === 'prince' && e.charging) {
+            const t = e.animT * 10;
+            bobY -= Math.abs(Math.sin(t)) * T * 0.2;
+            bob.rotation = Math.sin(t) * 0.06;
+          } else if (e.cardId === 'prince' && e.state === 'moving') {
+            const t = e.animT * 4.2;
+            bobY -= Math.abs(Math.sin(t)) * T * 0.09;
+            bob.rotation = Math.sin(t) * 0.035;
           } else if (e.state === 'moving' && e.speed > 0) {
             const t = e.animT * (4 + e.speed * 2.2);
             bobY -= Math.abs(Math.sin(t)) * T * 0.1;
@@ -469,7 +493,8 @@ export class Renderer {
           }
           if (e.state === 'attacking') {
             const lunge = Math.max(0, e.swing) ** 2;
-            bobY -= lunge * T * 0.14;
+            const lungeMul = e.cardId === 'prince' ? 0.22 : 0.14;
+            bobY -= lunge * T * lungeMul;
             bob.rotation += lunge * 0.3 * (bob.scale.x >= 0 ? 1 : -1);
           }
         }
@@ -481,6 +506,8 @@ export class Renderer {
           ? 0xff9c9c
           : e.stunLeft > 0
             ? 0x9fd8ff
+            : e.cardId === 'prince' && e.charging
+            ? 0xfff4c8
             : e.cardId === 'tesla' && e.state === 'attacking' && e.swing > 0.1
               ? 0xc8f8ff
               : 0xffffff;

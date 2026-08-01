@@ -6,6 +6,7 @@ export type UnitShape =
   | 'giant'
   | 'goblin'
   | 'skeleton'
+  | 'skeleton_army'
   | 'wizard'
   | 'witch'
   | 'valkyrie'
@@ -14,10 +15,12 @@ export type UnitShape =
   | 'musketeer'
   | 'minipekka'
   | 'hogrider'
+  | 'prince'
   | 'babydragon'
   | 'minion'
   | 'cannon'
   | 'tesla'
+  | 'tombstone'
   | 'fireball'
   | 'arrows'
   | 'zap';
@@ -73,8 +76,22 @@ export interface CardDef {
   spawnCount?: number;
   /** spawner troops: seconds between waves after the first */
   spawnIntervalSec?: number;
+  /** spawner troops: delay between each unit within the same wave (Tombstone: 0.5 s) */
+  spawnStaggerSec?: number;
+  /** spawner buildings: card to summon when destroyed or lifetime expires */
+  deathSpawnCardId?: string;
+  /** spawner buildings: how many units on death */
+  deathSpawnCount?: number;
   /** buildings that retract underground when idle (Tesla) */
   hidesUnderground?: boolean;
+  /** Prince-like: uninterrupted walk distance (tiles) before charge starts */
+  chargeDistTiles?: number;
+  /** speed while charging (tiles/s) */
+  chargeSpeed?: number;
+  /** damage multiplier on a charge hit */
+  chargeDamageMul?: number;
+  /** can jump the river only while charging */
+  chargeJumpsRiver?: boolean;
   visual: Visual;
 }
 
@@ -165,8 +182,16 @@ export interface Entity {
   swing: number;
   /** spawner troops: countdown until the next summon wave */
   spawnCd?: number;
+  /** Prince: tiles walked toward current target without attacking */
+  chargeAccum?: number;
+  /** Prince: currently charging — double damage, fast speed */
+  charging?: boolean;
+  /** Prince: target id used for charge tracking */
+  chargeTargetId?: number | null;
   /** Tesla: retracted underground — immune to most damage, can't attack */
   hidden?: boolean;
+  /** Once attacking a tower, unit ignores nearby enemy troops until Tesla resets focus */
+  towerFocusLocked?: boolean;
 
   towerKind?: TowerKind;
   side?: Side;
@@ -199,6 +224,7 @@ export interface Projectile {
 export interface PendingSpell {
   id: number;
   team: Team;
+  cardId: string;
   x0: number;
   y0: number;
   x: number;

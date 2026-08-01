@@ -41,7 +41,20 @@ const FORMATIONS: Record<number, Array<[number, number]>> = {
     [-0.5, 0.5],
     [0.5, 0.5],
   ],
+  15: [
+    [-1.0, -0.6], [-0.5, -0.6], [0, -0.6], [0.5, -0.6], [1.0, -0.6],
+    [-1.0, 0], [-0.5, 0], [0, 0], [0.5, 0], [1.0, 0],
+    [-1.0, 0.6], [-0.5, 0.6], [0, 0.6], [0.5, 0.6], [1.0, 0.6],
+  ],
 };
+
+interface PendingSpawn {
+  team: Team;
+  cardId: string;
+  x: number;
+  y: number;
+  t: number;
+}
 
 export class World {
   readonly b: Balance;
@@ -49,6 +62,8 @@ export class World {
   projectiles: Projectile[] = [];
   /** spells travelling toward their target; damage lands only on arrival */
   pendingSpells: PendingSpell[] = [];
+  /** delayed spawner summons (Tombstone stagger between skeletons) */
+  private pendingSpawns: PendingSpawn[] = [];
   /** transient visual events, drained by the renderer every frame */
   effects: Effect[] = [];
 
@@ -173,7 +188,7 @@ export class World {
     this.elixir[team] -= card.cost;
 
     if (card.kind === 'spell') {
-      this.castSpell(team, card, x, y);
+      this.castSpell(team, cardId, card, x, y);
       return true;
     }
 
@@ -191,11 +206,12 @@ export class World {
    * caster's own edge of the arena and flies to the target, exactly like a
    * real Fireball — damage only lands when `stepPendingSpells` sees it arrive.
    */
-  private castSpell(team: Team, card: CardDef, x: number, y: number) {
+  private castSpell(team: Team, cardId: string, card: CardDef, x: number, y: number) {
     const originY = team === 0 ? ARENA.height + 1.6 : -1.6;
     this.pendingSpells.push({
       id: this.nextId++,
       team,
+      cardId,
       x0: x,
       y0: originY,
       x,
@@ -223,7 +239,16 @@ export class World {
       s.x = s.x0 + (s.tx - s.x0) * k;
       s.y = s.y0 + (s.ty - s.y0) * k;
       if (k >= 1) {
-        this.splashDamage(s.team, s.tx, s.ty, s.splashRadius, s.damage, s.towerDamageFactor);
+        this.splashDamage(
+          s.team,
+          s.tx,
+          s.ty,
+          s.splashRadius,
+          s.damage,
+          s.towerDamageFactor,
+          undefined,
+          s.cardId,
+        );
         if (s.stunSec > 0) {
           const enemy: Team = s.team === 0 ? 1 : 0;
           for (const o of this.entities) {
@@ -289,13 +314,17 @@ export class World {
       hitFlash: 0,
       swing: 0,
       spawnCd: card.spawnIntervalSec ? 0 : undefined,
+      chargeAccum: card.chargeDistTiles ? 0 : undefined,
+      charging: false,
+      chargeTargetId: null,
       hidden: card.hidesUnderground ? false : undefined,
+      towerFocusLocked: false,
       active: true,
       rubble: false,
     });
   }
 
-  /** Periodic summons (Witch skeletons) — stops when the spawner dies. */
+  /** Periodic summons (Witch skeletons, Tombstone) — stops when the spawner dies. */
   private stepSpawner(e: Entity, dt: number) {
     if (e.deployLeft > 0 || e.spawnCd === undefined) return;
     const card = this.b.cards[e.cardId];
@@ -308,10 +337,45 @@ export class World {
 
     for (let i = 0; i < card.spawnCount; i++) {
       const [ox, oy] = SPAWN_PLUS[i % SPAWN_PLUS.length];
-      this.spawnTroop(e.team, card.spawnCardId, summon, e.x + ox, e.y + oy, true);
+      const delay = i * (card.spawnStaggerSec ?? 0);
+      const sx = e.x + ox;
+      const sy = e.y + oy;
+      if (delay <= 0) {
+        this.spawnTroop(e.team, card.spawnCardId, summon, sx, sy, true);
+      } else {
+        this.pendingSpawns.push({ team: e.team, cardId: card.spawnCardId, x: sx, y: sy, t: delay });
+      }
     }
     this.effects.push({ type: 'deploy', x: e.x, y: e.y });
     e.spawnCd = card.spawnIntervalSec;
+  }
+
+  private stepPendingSpawns(dt: number) {
+    const remaining: PendingSpawn[] = [];
+    for (const p of this.pendingSpawns) {
+      p.t -= dt;
+      if (p.t <= 0) {
+        const summon = this.b.cards[p.cardId];
+        if (summon) this.spawnTroop(p.team, p.cardId, summon, p.x, p.y, true);
+      } else {
+        remaining.push(p);
+      }
+    }
+    this.pendingSpawns = remaining;
+  }
+
+  /** Summon troops when a spawner building is destroyed or expires. */
+  private deathSpawn(e: Entity) {
+    const card = this.b.cards[e.cardId];
+    if (!card?.deathSpawnCardId || !card.deathSpawnCount) return;
+    const summon = this.b.cards[card.deathSpawnCardId];
+    if (!summon) return;
+
+    for (let i = 0; i < card.deathSpawnCount; i++) {
+      const [ox, oy] = SPAWN_PLUS[i % SPAWN_PLUS.length];
+      this.spawnTroop(e.team, card.deathSpawnCardId, summon, e.x + ox, e.y + oy, true);
+    }
+    this.effects.push({ type: 'deploy', x: e.x, y: e.y });
   }
 
   /** Tesla: retract underground when idle, rise when an enemy enters range. */
@@ -386,6 +450,7 @@ export class World {
         continue;
       }
       if (e.stunLeft > 0) {
+        if (this.b.cards[e.cardId]?.chargeDistTiles) this.resetCharge(e);
         e.stunLeft -= dt;
         this.stepSpawner(e, dt);
         this.stepHiddenBuilding(e);
@@ -399,6 +464,7 @@ export class World {
 
     this.stepProjectiles(dt);
     this.stepPendingSpells(dt);
+    this.stepPendingSpawns(dt);
     this.separate();
     this.cleanup();
     this.checkEnd();
@@ -469,8 +535,18 @@ export class World {
   private stepEntity(e: Entity, dt: number) {
     if (e.hidden && e.cardId === 'tesla') return;
 
+    const card = this.b.cards[e.cardId];
+
     const target = this.acquireTarget(e);
+    const prevTargetId = e.targetId;
     e.targetId = target ? target.id : null;
+
+    if (card?.chargeDistTiles) {
+      if (e.chargeTargetId != null && e.targetId !== e.chargeTargetId) this.resetCharge(e);
+      if (e.targetId == null) this.resetCharge(e);
+      else if (prevTargetId !== e.targetId) e.chargeTargetId = e.targetId;
+      else if (e.chargeTargetId == null) e.chargeTargetId = e.targetId;
+    }
 
     if (!target) {
       e.state = 'moving';
@@ -482,11 +558,17 @@ export class World {
 
     if (d <= reach) {
       e.state = 'attacking';
+      if (target.kind === 'tower' && e.kind === 'troop' && e.targets !== 'buildings') {
+        e.towerFocusLocked = true;
+      }
       if (target.x !== e.x) e.facing = target.x < e.x ? -1 : 1;
       if (e.attackCd <= 0 && e.active) {
         e.attackCd = e.attackSpeed;
         e.swing = 1;
-        this.fire(e, target);
+        const dmg =
+          e.charging && card?.chargeDamageMul ? e.damage * card.chargeDamageMul : e.damage;
+        if (e.charging) this.resetCharge(e);
+        this.fire(e, target, dmg);
       }
       return;
     }
@@ -506,6 +588,26 @@ export class World {
     e.x += (dx / len) * stepLen;
     e.y += (dy / len) * stepLen;
     if (Math.abs(dx) > 0.05) e.facing = dx < 0 ? -1 : 1;
+
+    if (card?.chargeDistTiles && !e.charging) {
+      e.chargeAccum = (e.chargeAccum ?? 0) + stepLen;
+      if (e.chargeAccum >= card.chargeDistTiles) {
+        e.charging = true;
+        e.speed = card.chargeSpeed ?? card.speed * 2;
+        if (card.chargeJumpsRiver) e.jumpsRiver = true;
+      }
+    }
+  }
+
+  /** Prince: end charge and restore normal movement. */
+  private resetCharge(e: Entity) {
+    const card = this.b.cards[e.cardId];
+    if (!card?.chargeDistTiles) return;
+    e.charging = false;
+    e.chargeAccum = 0;
+    e.chargeTargetId = null;
+    e.speed = card.speed;
+    e.jumpsRiver = card.jumpsRiver;
   }
 
   /**
@@ -543,7 +645,16 @@ export class World {
       return this.nearestEnemyInRange(e, e.range);
     }
 
-    if (e.targets !== 'buildings') {
+    if (e.towerFocusLocked) {
+      const locked = e.targetId != null ? this.byId(e.targetId) : undefined;
+      if (locked && locked.kind === 'tower' && locked.team === enemy) {
+        return locked;
+      }
+      e.towerFocusLocked = false;
+    }
+
+    const canScanTroops = !e.towerFocusLocked && e.targets !== 'buildings';
+    if (canScanTroops) {
       let best: Entity | undefined;
       let bestD = e.kind === 'tower' ? e.range + e.radius : e.sightRange;
       for (const o of this.entities) {
@@ -578,7 +689,8 @@ export class World {
     return best;
   }
 
-  private fire(e: Entity, target: Entity) {
+  private fire(e: Entity, target: Entity, damageOverride?: number) {
+    const dmg = damageOverride ?? e.damage;
     if (e.projectileSpeed > 0) {
       this.projectiles.push({
         id: this.nextId++,
@@ -589,7 +701,7 @@ export class World {
         py: e.y - 0.4,
         targetId: target.id,
         speed: e.projectileSpeed,
-        damage: e.damage,
+        damage: dmg,
         splashRadius: e.splashRadius,
         color:
           e.kind === 'tower'
@@ -603,7 +715,7 @@ export class World {
     }
     // instant ranged zap (Tesla)
     if (e.projectileSpeed <= 0 && e.range > 1.2 && e.kind === 'building') {
-      this.damage(target, e.damage, { attacker: e });
+      this.damage(target, dmg, { attacker: e });
       if (e.cardId === 'tesla') {
         this.effects.push({
           type: 'teslaZap',
@@ -620,10 +732,10 @@ export class World {
     }
     // melee: splash is centred on the attacker so it reads as a 360° swing
     if (e.splashRadius > 0) {
-      this.splashDamage(e.team, e.x, e.y, e.splashRadius, e.damage, 1, e);
+      this.splashDamage(e.team, e.x, e.y, e.splashRadius, dmg, 1, e);
       this.effects.push({ type: 'splash', x: e.x, y: e.y, radius: e.splashRadius });
     } else {
-      this.damage(target, e.damage, { attacker: e });
+      this.damage(target, dmg, { attacker: e });
       this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#fff2c4' });
     }
   }
@@ -669,25 +781,43 @@ export class World {
     amount: number,
     towerFactor = 1,
     attacker?: Entity,
+    spellCardId?: string,
   ) {
     const enemy: Team = team === 0 ? 1 : 0;
     for (const o of this.entities) {
       if (o.team !== enemy || o.hp <= 0) continue;
       if (dist(x, y, o.x, o.y) - o.radius > radius) continue;
-      this.damage(o, o.kind === 'tower' ? amount * towerFactor : amount, { spell: !attacker, attacker });
+      this.damage(o, o.kind === 'tower' ? amount * towerFactor : amount, {
+        spell: !attacker,
+        attacker,
+        spellCardId,
+      });
     }
   }
 
   private damage(
     target: Entity,
     amount: number,
-    opts?: { spell?: boolean; attacker?: Entity; attackerTeam?: Team },
+    opts?: { spell?: boolean; attacker?: Entity; attackerTeam?: Team; spellCardId?: string },
   ) {
     if (target.hp <= 0) return;
     if (this.isDamageBlocked(target, opts)) return;
     target.hp -= amount;
     target.hitFlash = 0.16;
     if (target.towerKind === 'king') target.active = true;
+    this.resetTowerFocusIfHit(target, opts);
+  }
+
+  /** Tesla zap and Choque spell reset tower focus on troops that can attack units. */
+  private resetTowerFocusIfHit(
+    target: Entity,
+    opts?: { attacker?: Entity; spellCardId?: string },
+  ) {
+    const hitByTesla = opts?.attacker?.cardId === 'tesla';
+    const hitByZap = opts?.spellCardId === 'zap';
+    if ((hitByTesla || hitByZap) && target.targets !== 'buildings') {
+      target.towerFocusLocked = false;
+    }
   }
 
   /** Hidden Tesla ignores most damage while underground. */
@@ -763,6 +893,7 @@ export class World {
           this.finish(e.team === 0 ? 'lose' : 'win');
         }
       } else {
+        this.deathSpawn(e);
         const v = this.b.cards[e.cardId]?.visual;
         this.effects.push({
           type: 'death',
