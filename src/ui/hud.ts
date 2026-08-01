@@ -1,4 +1,5 @@
 import type { Balance, MatchResult } from '../sim/types';
+import type { SpeedMultiplier } from '../dev/settings';
 import type { Hand, World } from '../sim/world';
 import { shade } from '../render/shapes';
 
@@ -40,6 +41,7 @@ export class Ui {
   private timerEl!: HTMLElement;
   private timerValue!: HTMLElement;
   private timerLabel!: HTMLElement;
+  private speedBadge!: HTMLElement;
   private soundBtn!: HTMLButtonElement;
 
   private cardsEl!: HTMLElement;
@@ -94,6 +96,7 @@ export class Ui {
       <div class="timer" data-role="timer">
         <div class="label" data-role="timer-label">Tempo</div>
         <div class="value" data-role="timer-value">3:00</div>
+        <div class="speed-badge" data-role="speed" hidden></div>
       </div>
       <div class="crowns" data-role="crowns-self"></div>
       <span class="avatar" style="background:#3b7dd8"></span>
@@ -108,6 +111,7 @@ export class Ui {
     this.timerEl = q('timer');
     this.timerValue = q('timer-value');
     this.timerLabel = q('timer-label');
+    this.speedBadge = q('speed');
     this.soundBtn = q<HTMLButtonElement>('sound');
     for (const box of [this.crownsEnemy, this.crownsSelf]) {
       box.innerHTML = '<i class="crown-dot"></i>'.repeat(3);
@@ -120,6 +124,18 @@ export class Ui {
   setSoundOn(on: boolean) {
     this.soundBtn.innerHTML = on ? ICON_SOUND_ON : ICON_SOUND_OFF;
     this.soundBtn.classList.toggle('off', !on);
+  }
+
+  setDevSpeeds(gameSpeed: SpeedMultiplier, elixirSpeed: SpeedMultiplier) {
+    const parts: string[] = [];
+    if (gameSpeed > 1) parts.push(`${gameSpeed}x`);
+    if (elixirSpeed > 1) parts.push(`⚗${elixirSpeed}x`);
+    if (parts.length === 0) {
+      this.speedBadge.hidden = true;
+      return;
+    }
+    this.speedBadge.hidden = false;
+    this.speedBadge.textContent = parts.join(' ');
   }
 
   private buildHud() {

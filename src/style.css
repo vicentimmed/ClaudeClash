@@ -111,6 +111,13 @@ body {
 .timer.hot .value {
   color: #ff8f6b;
 }
+.speed-badge {
+  margin-top: 1px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
 
 .icon-btn {
   background: var(--wood-light);
@@ -666,6 +673,53 @@ body {
 }
 .field.wide {
   grid-column: span 2;
+}
+
+.group-note {
+  margin: -2px 0 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.speed-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.speed-row + .speed-row {
+  margin-top: 8px;
+}
+.speed-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--parchment);
+  flex: 0 0 auto;
+}
+.speed-seg {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+.speed-btn {
+  flex: 1;
+  border: 1px solid #3c3025;
+  background: #0f0c09;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 8px 0;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.speed-btn.active {
+  color: #1a1410;
+  background: var(--gold);
+  border-color: #c9a84a;
+}
+.speed-btn:active {
+  transform: scale(0.97);
 }
 
 .admin-foot {

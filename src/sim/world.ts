@@ -52,6 +52,9 @@ export class World {
   /** towers destroyed, indexed by the team that destroyed them */
   crowns: [number, number] = [0, 0];
 
+  /** Dev-only multiplier for elixir regen (does not affect units or match clock). */
+  elixirSpeedMul = 1;
+
   private nextId = 1;
 
   constructor(balance: Balance) {
@@ -383,8 +386,9 @@ export class World {
   private stepElixir(dt: number) {
     const rate = this.elixirRate();
     const max = this.b.global.elixirMax;
-    this.elixir[0] = Math.min(max, this.elixir[0] + dt / rate);
-    this.elixir[1] = Math.min(max, this.elixir[1] + dt / rate);
+    const elixirDt = dt * this.elixirSpeedMul;
+    this.elixir[0] = Math.min(max, this.elixir[0] + elixirDt / rate);
+    this.elixir[1] = Math.min(max, this.elixir[1] + elixirDt / rate);
   }
 
   private stepEntity(e: Entity, dt: number) {

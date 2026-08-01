@@ -35,15 +35,81 @@ const A2 = 110;
 const note = (semitonesAboveA2: number) => A2 * Math.pow(2, semitonesAboveA2 / 12);
 
 /**
- * Four-bar loop in A minor: Am - F - C - G. Each entry is the chord root
- * (semitones above A2) plus the triad used by the arpeggio.
+ * Arena Anthem (v3) — 16-bar battle theme at 136 BPM.
+ * Form: verse → lift → chorus → bridge/build.
+ * Backups: music-v1-backup.ts, music-v2-backup.ts.
+ *
+ * Semitone offsets from A2 (A=0, C=3, E=7, F=8, G=10…).
  */
 const PROGRESSION = [
-  { root: 0, triad: [0, 3, 7, 12] },
-  { root: -4, triad: [-4, 0, 3, 8] },
-  { root: 3, triad: [3, 7, 10, 15] },
-  { root: -2, triad: [-2, 2, 5, 10] },
+  // verse
+  { root: 0, triad: [0, 3, 7, 12] }, // Am
+  { root: -4, triad: [-4, 0, 3, 8] }, // F
+  { root: 3, triad: [3, 7, 10, 15] }, // C
+  { root: -2, triad: [-2, 2, 5, 10] }, // G
+  // lift
+  { root: 0, triad: [0, 3, 7, 12] }, // Am
+  { root: -5, triad: [-5, -2, 2, 7] }, // Em
+  { root: -4, triad: [-4, 0, 3, 8] }, // F
+  { root: -2, triad: [-2, 2, 5, 10] }, // G
+  // chorus (brighter)
+  { root: 3, triad: [3, 7, 10, 15] }, // C
+  { root: -2, triad: [-2, 2, 5, 10] }, // G
+  { root: 0, triad: [0, 3, 7, 12] }, // Am
+  { root: -4, triad: [-4, 0, 3, 8] }, // F
+  // bridge → dominant pull
+  { root: 5, triad: [5, 8, 12, 17] }, // Dm
+  { root: 0, triad: [0, 3, 7, 12] }, // Am
+  { root: -4, triad: [-4, 0, 3, 8] }, // F
+  { root: -5, triad: [-5, -1, 2, 7] }, // E (V — epic resolve into Am)
 ];
+
+/**
+ * Main lead — singable game-hook. `null` = rest.
+ * 128 eighths = 16 bars.
+ */
+const MELODY: (number | null)[] = [
+  // bars 0–1  "call" — ascending punch
+  12, null, 15, 12, 19, null, 17, 15, 15, 17, 19, 22, 20, 19, 17, 15,
+  // bars 2–3  "answer"
+  15, null, 17, 15, 22, null, 20, 19, 19, 17, 15, 14, 15, 17, 19, 15,
+  // bars 4–5  lift with leap
+  12, 15, 19, 24, null, 22, 19, 17, 17, null, 19, 17, 22, 20, 19, 17,
+  // bars 6–7  run into chorus
+  15, 17, 19, 22, 24, 22, 20, 19, 17, 15, 14, 12, 14, 15, 17, 19,
+  // bars 8–9  CHORUS hook (big & catchy)
+  27, null, 24, 22, 24, null, 22, 19, 22, 24, 27, 24, 22, 20, 19, 17,
+  // bars 10–11 chorus resolve
+  19, null, 22, 19, 24, null, 22, 20, 19, 17, 15, 17, 19, 22, 20, 19,
+  // bars 12–13 bridge sequence (rising)
+  17, 19, 20, 24, 22, 20, 19, 17, 15, 17, 19, 22, 24, 22, 20, 19,
+  // bars 14–15 build + landing
+  20, 22, 24, 27, 24, 22, 20, 19, 22, 24, 27, 31, 29, 27, 24, 22,
+];
+
+/** Harmony / counter — enters from bar 4. Often a 3rd below the lead. */
+const COUNTER: (number | null)[] = [
+  // 0–3 silent (verse sparse)
+  null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+  null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+  // 4–7 thirds under lift
+  8, 12, 15, 19, null, 17, 15, 12, 12, null, 15, 12, 17, 15, 14, 12,
+  12, 14, 15, 17, 19, 17, 15, 14, 12, 10, 8, 7, 8, 10, 12, 14,
+  // 8–11 chorus harmony
+  22, null, 19, 17, 19, null, 17, 15, 17, 19, 22, 19, 17, 15, 14, 12,
+  15, null, 17, 15, 19, null, 17, 15, 14, 12, 10, 12, 14, 17, 15, 14,
+  // 12–15 bridge echo (delay-ish, sparser)
+  null, 15, null, 19, null, 17, null, 14, null, 12, null, 17, null, 19, null, 15,
+  15, null, 19, null, 20, null, 17, null, 17, 19, 22, 24, 22, 20, 19, 17,
+];
+
+/**
+ * Gallop bass offsets from chord root, per eighth in a bar.
+ * Pattern: root . root 5th | root . root oct  — classic game-battle drive.
+ */
+const BASS_PATTERN: (number | null)[] = [-12, null, -12, -5, -12, null, -12, 0];
+
+const STEPS_PER_LOOP = 128;
 
 export class GameAudio {
   private ctx: AudioContext | null = null;
@@ -57,8 +123,8 @@ export class GameAudio {
   private nextNoteTime = 0;
   private step = 0;
   private playingMusic = false;
-  /** eighth notes at 104 bpm */
-  private readonly stepDur = 60 / 104 / 2;
+  /** eighth notes at 136 bpm */
+  private readonly stepDur = 60 / 136 / 2;
 
   constructor() {
     try {
@@ -170,7 +236,7 @@ export class GameAudio {
     while (this.nextNoteTime < ctx.currentTime + 0.12) {
       this.scheduleStep(this.step, this.nextNoteTime);
       this.nextNoteTime += this.stepDur;
-      this.step = (this.step + 1) % 32;
+      this.step = (this.step + 1) % STEPS_PER_LOOP;
     }
   }
 
@@ -178,48 +244,238 @@ export class GameAudio {
     const bar = Math.floor(step / 8) % PROGRESSION.length;
     const beat = step % 8;
     const chord = PROGRESSION[bar];
+    const verse = bar < 4;
+    const chorus = bar >= 8 && bar < 12;
+    const bridge = bar >= 12;
+    const build = bar >= 14;
 
-    // bass on the down beat and the half bar
-    if (beat === 0 || beat === 4) {
+    // ---- gallop bass -------------------------------------------------
+    const bassOff = BASS_PATTERN[beat];
+    if (bassOff !== null) {
+      const accent = beat === 0 || beat === 4;
       this.tone({
-        freq: note(chord.root - 12),
+        freq: note(chord.root + bassOff),
         when,
-        dur: 0.42,
+        dur: accent ? 0.26 : 0.12,
         type: 'triangle',
-        gain: 0.5,
+        gain: accent ? 0.52 : 0.3,
+        bus: this.musicBus,
+      });
+      if (accent) {
+        // sub sine for body
+        this.tone({
+          freq: note(chord.root - 12),
+          when,
+          dur: 0.2,
+          type: 'sine',
+          gain: 0.22,
+          bus: this.musicBus,
+        });
+      }
+    }
+    // bridge: add walking fifths on offbeats for urgency
+    if (bridge && (beat === 1 || beat === 5)) {
+      this.tone({
+        freq: note(chord.root - 5),
+        when,
+        dur: 0.1,
+        type: 'triangle',
+        gain: 0.22,
         bus: this.musicBus,
       });
     }
 
-    // arpeggio riding the eighths
-    const arp = chord.triad[[0, 2, 1, 3, 2, 1, 3, 2][beat]];
-    this.tone({
-      freq: note(arp + 12),
-      when,
-      dur: 0.2,
-      type: 'square',
-      gain: beat % 2 === 0 ? 0.13 : 0.08,
-      bus: this.musicBus,
-    });
-
-    // soft pad holding the chord through the bar
+    // ---- pads / brass ------------------------------------------------
     if (beat === 0) {
-      for (const semi of [chord.triad[0], chord.triad[2]]) {
+      const padGain = verse ? 0.04 : chorus ? 0.09 : 0.065;
+      this.tone({
+        freq: note(chord.root),
+        when,
+        dur: this.stepDur * 8,
+        type: 'sawtooth',
+        gain: padGain,
+        attack: 0.1,
+        bus: this.musicBus,
+      });
+      this.tone({
+        freq: note(chord.root + 7),
+        when,
+        dur: this.stepDur * 8,
+        type: 'sawtooth',
+        gain: padGain * 0.75,
+        attack: 0.12,
+        bus: this.musicBus,
+      });
+      // soft third for color (minor/major from triad)
+      this.tone({
+        freq: note(chord.triad[1]),
+        when,
+        dur: this.stepDur * 8,
+        type: 'sine',
+        gain: padGain * 0.55,
+        attack: 0.15,
+        bus: this.musicBus,
+      });
+    }
+    // brass stab on downs — bigger in chorus & on E dominant
+    if (beat === 0 && (chorus || bar === 15 || (!verse && bar % 2 === 0))) {
+      this.tone({
+        freq: note(chord.root + 12),
+        when,
+        dur: 0.14,
+        type: 'square',
+        gain: chorus || bar === 15 ? 0.14 : 0.09,
+        bus: this.musicBus,
+      });
+      this.tone({
+        freq: note(chord.root + 19),
+        when,
+        dur: 0.12,
+        type: 'square',
+        gain: chorus || bar === 15 ? 0.08 : 0.05,
+        bus: this.musicBus,
+      });
+    }
+
+    // ---- arpeggio sparkle --------------------------------------------
+    if (!verse || beat % 2 === 0) {
+      const arpIdx = [0, 2, 1, 3, 2, 0, 3, 1][beat];
+      const arpGain = verse ? 0.04 : chorus ? 0.08 : 0.06;
+      this.tone({
+        freq: note(chord.triad[arpIdx] + (chorus ? 24 : 12)),
+        when,
+        dur: 0.11,
+        type: 'square',
+        gain: beat % 2 === 0 ? arpGain : arpGain * 0.65,
+        bus: this.musicBus,
+      });
+    }
+
+    // ---- lead melody (with chorus thickness) -------------------------
+    const mel = MELODY[step % MELODY.length];
+    if (mel !== null) {
+      const leadGain = chorus ? 0.22 : bridge ? 0.18 : 0.16;
+      const leadDur = beat === 0 || beat === 4 ? 0.28 : 0.18;
+      this.tone({
+        freq: note(mel),
+        when,
+        dur: leadDur,
+        type: 'triangle',
+        gain: leadGain,
+        bus: this.musicBus,
+      });
+      // slight detune twin for "gamey" width
+      this.tone({
+        freq: note(mel) * 1.004,
+        when,
+        dur: leadDur,
+        type: 'triangle',
+        gain: leadGain * 0.45,
+        bus: this.musicBus,
+      });
+      // octave shimmer from lift onward
+      if (!verse) {
         this.tone({
-          freq: note(semi),
+          freq: note(mel + 12),
           when,
-          dur: this.stepDur * 8,
+          dur: leadDur * 0.85,
           type: 'sine',
-          gain: 0.1,
-          attack: 0.12,
+          gain: chorus ? 0.08 : 0.05,
           bus: this.musicBus,
         });
       }
     }
 
-    // light percussion
-    if (beat === 0 || beat === 4) this.noise({ when, dur: 0.11, gain: 0.22, filter: 220, bus: this.musicBus });
-    if (beat % 2 === 1) this.noise({ when, dur: 0.04, gain: 0.05, filter: 6500, bus: this.musicBus });
+    // ---- counter / harmony -------------------------------------------
+    const ctr = COUNTER[step % COUNTER.length];
+    if (ctr !== null) {
+      this.tone({
+        freq: note(ctr),
+        when,
+        dur: 0.16,
+        type: 'square',
+        gain: chorus ? 0.09 : 0.06,
+        bus: this.musicBus,
+      });
+    }
+
+    // ---- drums -------------------------------------------------------
+    // kick on 1 & 3; extra kicks on build
+    if (beat === 0 || beat === 4 || (build && (beat === 2 || beat === 6))) {
+      this.noise({ when, dur: 0.11, gain: 0.26, filter: 160, bus: this.musicBus });
+      this.tone({
+        freq: 95,
+        when,
+        dur: 0.11,
+        type: 'sine',
+        gain: 0.38,
+        slideTo: 42,
+        bus: this.musicBus,
+      });
+    }
+    // snare on 2 & 4; denser in chorus/bridge
+    if (beat === 4 || (chorus && beat === 6) || (bridge && (beat === 2 || beat === 6))) {
+      this.noise({
+        when,
+        dur: 0.09,
+        gain: 0.2,
+        filter: 3200,
+        sweepTo: 800,
+        bus: this.musicBus,
+      });
+    }
+    // hats — light in verse, busy later
+    if (verse) {
+      if (beat % 2 === 1) {
+        this.noise({ when, dur: 0.025, gain: 0.04, filter: 7500, bus: this.musicBus });
+      }
+    } else {
+      this.noise({
+        when,
+        dur: beat % 2 === 0 ? 0.035 : 0.022,
+        gain: beat % 2 === 0 ? 0.055 : 0.075,
+        filter: 8000,
+        bus: this.musicBus,
+      });
+    }
+    // clap-ish layer on chorus downs
+    if (chorus && (beat === 0 || beat === 4)) {
+      this.noise({ when, dur: 0.06, gain: 0.12, filter: 4500, sweepTo: 1500, bus: this.musicBus });
+    }
+
+    // ---- fills -------------------------------------------------------
+    // bar 7 → into chorus
+    if (bar === 7 && beat >= 4) {
+      this.noise({ when, dur: 0.045, gain: 0.1, filter: 3500, bus: this.musicBus });
+      this.tone({
+        freq: note(chord.triad[beat % 4] + 24),
+        when,
+        dur: 0.07,
+        type: 'square',
+        gain: 0.08,
+        bus: this.musicBus,
+      });
+    }
+    // bar 15 — snare roll + rising fanfare into loop restart
+    if (bar === 15) {
+      this.noise({
+        when,
+        dur: 0.04,
+        gain: 0.08 + beat * 0.015,
+        filter: 2800 + beat * 400,
+        bus: this.musicBus,
+      });
+      if (beat >= 4) {
+        this.tone({
+          freq: note(chord.root + 12 + beat),
+          when,
+          dur: 0.08,
+          type: 'square',
+          gain: 0.1,
+          bus: this.musicBus,
+        });
+      }
+    }
   }
 
   // ---------------------------------------------------------------------- sfx

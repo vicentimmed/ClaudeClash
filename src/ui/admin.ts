@@ -1,4 +1,5 @@
 import { DEFAULT_BALANCE, resetBalance, saveBalance } from '../balance';
+import type { SpeedMultiplier } from '../dev/settings';
 import type { Balance, CardDef, TargetKind } from '../sim/types';
 
 interface NumField {
@@ -50,10 +51,16 @@ export class AdminPanel {
   private el: HTMLElement;
   private body: HTMLElement;
   private draft: Balance;
+  private speed = 1 as SpeedMultiplier;
+  private elixirSpeed = 1 as SpeedMultiplier;
+  private speedBtns: HTMLButtonElement[] = [];
+  private elixirSpeedBtns: HTMLButtonElement[] = [];
 
   constructor(
     balance: Balance,
     private onApply: (balance: Balance) => void,
+    private onSpeedChange: (speed: SpeedMultiplier) => void,
+    private onElixirSpeedChange: (speed: SpeedMultiplier) => void,
   ) {
     this.draft = structuredClone(balance);
     this.el = document.getElementById('admin')!;
@@ -84,8 +91,10 @@ export class AdminPanel {
     return this.el.querySelector<T>(`[data-role="${role}"]`)!;
   }
 
-  open(balance: Balance) {
+  open(balance: Balance, gameSpeed: SpeedMultiplier = 1, elixirSpeed: SpeedMultiplier = 1) {
     this.draft = structuredClone(balance);
+    this.speed = gameSpeed;
+    this.elixirSpeed = elixirSpeed;
     this.render();
     this.el.classList.add('show');
   }
@@ -98,6 +107,7 @@ export class AdminPanel {
 
   private render() {
     this.body.innerHTML = '';
+    this.body.appendChild(this.testGroup());
     this.body.appendChild(
       this.group('Partida', null, null, GLOBAL_FIELDS, this.draft.global as unknown as Record<string, number>),
     );
@@ -122,6 +132,85 @@ export class AdminPanel {
 
     for (const [id, card] of Object.entries(this.draft.cards)) {
       this.body.appendChild(this.cardGroup(id, card));
+    }
+  }
+
+  private testGroup(): HTMLElement {
+    const box = document.createElement('div');
+    box.className = 'group';
+    const head = document.createElement('h3');
+    head.textContent = 'Teste';
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = 'dev';
+    head.appendChild(tag);
+    box.appendChild(head);
+
+    const note = document.createElement('p');
+    note.className = 'group-note';
+    note.textContent =
+      'Atalhos de teste — não alteram o balanceamento salvo. Velocidade acelera tudo; Elixir acelera só a regeneração.';
+    box.appendChild(note);
+
+    box.appendChild(this.speedRow('Velocidade do jogo', this.speed, (s) => this.setSpeed(s), 'speedBtns'));
+    box.appendChild(
+      this.speedRow('Velocidade do elixir', this.elixirSpeed, (s) => this.setElixirSpeed(s), 'elixirSpeedBtns'),
+    );
+    return box;
+  }
+
+  private speedRow(
+    labelText: string,
+    active: SpeedMultiplier,
+    onPick: (speed: SpeedMultiplier) => void,
+    btnStore: 'speedBtns' | 'elixirSpeedBtns',
+  ): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'speed-row';
+    const label = document.createElement('span');
+    label.className = 'speed-label';
+    label.textContent = labelText;
+    row.appendChild(label);
+
+    const seg = document.createElement('div');
+    seg.className = 'speed-seg';
+    const btns: HTMLButtonElement[] = [];
+    for (const speed of [1, 2, 3] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'speed-btn';
+      btn.textContent = `${speed}x`;
+      btn.setAttribute('aria-pressed', String(active === speed));
+      btn.classList.toggle('active', active === speed);
+      btn.addEventListener('click', () => onPick(speed));
+      seg.appendChild(btn);
+      btns.push(btn);
+    }
+    row.appendChild(seg);
+
+    if (btnStore === 'speedBtns') this.speedBtns = btns;
+    else this.elixirSpeedBtns = btns;
+
+    return row;
+  }
+
+  private setSpeed(speed: SpeedMultiplier) {
+    this.speed = speed;
+    this.syncSpeedBtns(this.speedBtns, speed);
+    this.onSpeedChange(speed);
+  }
+
+  private setElixirSpeed(speed: SpeedMultiplier) {
+    this.elixirSpeed = speed;
+    this.syncSpeedBtns(this.elixirSpeedBtns, speed);
+    this.onElixirSpeedChange(speed);
+  }
+
+  private syncSpeedBtns(btns: HTMLButtonElement[], speed: SpeedMultiplier) {
+    for (const btn of btns) {
+      const on = btn.textContent === `${speed}x`;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', String(on));
     }
   }
 

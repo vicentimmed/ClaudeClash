@@ -1,6 +1,7 @@
 import { Container, Graphics, type Ticker } from 'pixi.js';
 import { GameAudio } from './audio';
 import { loadBalance, loadSavedDeck, saveBalance, saveDeck } from './balance';
+import { loadDevSettings, saveDevSettings, type SpeedMultiplier } from './dev/settings';
 import { Renderer } from './render/renderer';
 import { drawUnit } from './render/shapes';
 import { Bot } from './sim/bot';
@@ -29,6 +30,8 @@ export class Game {
   private wasElixirFull = false;
   private lastTimerTick = -1;
   private running = false;
+  private gameSpeed: SpeedMultiplier = loadDevSettings().gameSpeed;
+  private elixirSpeed: SpeedMultiplier = loadDevSettings().elixirSpeed;
 
   private stage!: HTMLElement;
   private hint!: HTMLElement;
@@ -48,7 +51,7 @@ export class Game {
       onRestart: () => this.openDeckBuilder(),
       onOpenAdmin: () => {
         this.audio.play('uiTap');
-        this.admin.open(this.balance);
+        this.admin.open(this.balance, this.gameSpeed, this.elixirSpeed);
       },
       onToggleSound: () => this.toggleSound(),
       onEditDeck: () => {
@@ -57,8 +60,14 @@ export class Game {
       },
     });
     this.ui.setSoundOn(this.audio.enabled);
+    this.ui.setDevSpeeds(this.gameSpeed, this.elixirSpeed);
 
-    this.admin = new AdminPanel(this.balance, (balance) => this.applyBalance(balance));
+    this.admin = new AdminPanel(
+      this.balance,
+      (balance) => this.applyBalance(balance),
+      (gameSpeed) => this.setGameSpeed(gameSpeed),
+      (elixirSpeed) => this.setElixirSpeed(elixirSpeed),
+    );
 
     this.deckBuilder = new DeckBuilder(this.balance, (cardId, size) => this.makeArt(cardId, size), {
       onStart: (deck) => this.startMatch(deck),
@@ -114,6 +123,7 @@ export class Game {
 
   private newMatch(deck: string[]) {
     this.world = new World(this.balance);
+    this.world.elixirSpeedMul = this.elixirSpeed;
     this.hand = new Hand(deck);
     this.botHand = new Hand(this.randomBotDeck());
     this.bot = new Bot();
@@ -154,6 +164,19 @@ export class Game {
       else this.audio.stopMusic();
       if (on) this.audio.play('uiTap');
     });
+  }
+
+  private setGameSpeed(speed: SpeedMultiplier) {
+    this.gameSpeed = speed;
+    saveDevSettings({ gameSpeed: speed, elixirSpeed: this.elixirSpeed });
+    this.ui.setDevSpeeds(speed, this.elixirSpeed);
+  }
+
+  private setElixirSpeed(speed: SpeedMultiplier) {
+    this.elixirSpeed = speed;
+    if (this.world) this.world.elixirSpeedMul = speed;
+    saveDevSettings({ gameSpeed: this.gameSpeed, elixirSpeed: speed });
+    this.ui.setDevSpeeds(this.gameSpeed, speed);
   }
 
   // ------------------------------------------------------------------ input
@@ -216,12 +239,13 @@ export class Game {
   // ------------------------------------------------------------------- loop
 
   private tick(ticker: Ticker) {
-    const dt = Math.min(ticker.deltaMS / 1000, 0.25);
+    const dt = Math.min(ticker.deltaMS / 1000, 0.25) * this.gameSpeed;
 
     if (this.running && this.world.phase !== 'over') {
       this.acc += dt;
       let guard = 0;
-      while (this.acc >= this.stepSec && guard++ < 8) {
+      const maxSteps = Math.ceil(8 * this.gameSpeed);
+      while (this.acc >= this.stepSec && guard++ < maxSteps) {
         this.world.step(this.stepSec);
         this.bot.update(this.world, this.botHand, this.stepSec);
         this.acc -= this.stepSec;
