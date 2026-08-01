@@ -5,6 +5,7 @@ export type CardKind = 'troop' | 'building' | 'spell';
 export type UnitShape =
   | 'giant'
   | 'goblin'
+  | 'goblins'
   | 'skeleton'
   | 'skeleton_army'
   | 'wizard'
@@ -18,12 +19,24 @@ export type UnitShape =
   | 'prince'
   | 'babydragon'
   | 'minion'
+  | 'minions'
   | 'cannon'
   | 'tesla'
   | 'tombstone'
   | 'fireball'
   | 'arrows'
-  | 'zap';
+  | 'zap'
+  | 'goblin_barrel'
+  | 'balloon'
+  | 'rage'
+  | 'xbow'
+  | 'freeze'
+  | 'pekka'
+  | 'mirror'
+  | 'golem'
+  | 'golemite'
+  | 'mega_knight'
+  | 'inferno';
 
 export interface Visual {
   shape: UnitShape;
@@ -92,6 +105,46 @@ export interface CardDef {
   chargeDamageMul?: number;
   /** can jump the river only while charging */
   chargeJumpsRiver?: boolean;
+  /** spell: spawns troops on arrival (Goblin Barrel) */
+  spellSpawnCardId?: string;
+  /** spell: number of troops spawned on arrival */
+  spellSpawnCount?: number;
+  /** spell: launches from king tower instead of board edge */
+  spellFromKing?: boolean;
+  /** spell: buff duration (Rage) */
+  buffDurationSec?: number;
+  /** spell: movement speed multiplier while buffed */
+  buffSpeedMul?: number;
+  /** spell: attack speed multiplier while buffed */
+  buffAttackMul?: number;
+  /** spell: freeze duration (Freeze) */
+  freezeSec?: number;
+  /** death explosion damage */
+  deathSplashDamage?: number;
+  /** death explosion radius (tiles) */
+  deathSplashRadius?: number;
+  /** splits into another card on death (Golem) */
+  deathSplitCardId?: string;
+  /** how many units on split */
+  deathSplitCount?: number;
+  /** inferno tower damage stages */
+  infernoStages?: number[];
+  /** seconds on same target before inferno stage increases */
+  infernoStageSec?: number;
+  /** splash damage when deployed (Mega Knight) */
+  deploySplashDamage?: number;
+  deploySplashRadius?: number;
+  /** Mega Knight jump */
+  jumpMinDist?: number;
+  jumpMaxDist?: number;
+  jumpDamage?: number;
+  jumpRadius?: number;
+  /** seconds for the leap arc (heavy = slow) */
+  jumpDurationSec?: number;
+  /** Mirror spell — copies last played card */
+  mirror?: boolean;
+  /** Internal spawn units — hidden from deck builder (Golemites) */
+  spawnOnly?: boolean;
   visual: Visual;
 }
 
@@ -192,6 +245,27 @@ export interface Entity {
   hidden?: boolean;
   /** Once attacking a tower, unit ignores nearby enemy troops until Tesla resets focus */
   towerFocusLocked?: boolean;
+  /** Inferno Tower: current beam damage stage (0–2) */
+  infernoStage?: number;
+  /** Inferno Tower: time on current target at current stage */
+  infernoStageT?: number;
+  /** Inferno Tower: last target id for ramp tracking */
+  infernoTargetId?: number | null;
+  /** Rage buff time remaining */
+  rageLeft?: number;
+  rageSpeedMul?: number;
+  rageAttackMul?: number;
+  /** Mega Knight: jump in progress */
+  jumping?: boolean;
+  jumpFromX?: number;
+  jumpFromY?: number;
+  jumpTargetX?: number;
+  jumpTargetY?: number;
+  jumpT?: number;
+  /** seconds left — arms lowering after landing */
+  jumpLandLeft?: number;
+  /** Mega Knight: deploy landing splash not yet fired */
+  deploySplashPending?: boolean;
 
   towerKind?: TowerKind;
   side?: Side;
@@ -244,6 +318,19 @@ export interface PendingSpell {
   accent: string;
 }
 
+/** Persistent Rage spell pool on the arena floor — buffs allies while active. */
+export interface RageZone {
+  id: number;
+  team: Team;
+  x: number;
+  y: number;
+  radius: number;
+  timeLeft: number;
+  duration: number;
+  body: string;
+  accent: string;
+}
+
 export type Effect =
   | { type: 'hit'; x: number; y: number; color: string }
   | { type: 'splash'; x: number; y: number; radius: number }
@@ -251,7 +338,8 @@ export type Effect =
   | { type: 'deploy'; x: number; y: number }
   | { type: 'towerDown'; x: number; y: number }
   | { type: 'spell'; x: number; y: number; radius: number; shape: UnitShape }
-  | { type: 'teslaZap'; x0: number; y0: number; x1: number; y1: number };
+  | { type: 'teslaZap'; x0: number; y0: number; x1: number; y1: number }
+  | { type: 'infernoBeam'; x0: number; y0: number; x1: number; y1: number; stage: number };
 
 export type MatchPhase = 'normal' | 'overtime' | 'over';
 export type MatchResult = 'win' | 'lose' | 'draw';

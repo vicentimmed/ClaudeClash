@@ -733,6 +733,20 @@ body {
   font-weight: 800;
   cursor: pointer;
 }
+.dev-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--parchment);
+  cursor: pointer;
+  user-select: none;
+}
+.dev-toggle input {
+  accent-color: var(--gold);
+}
+
 .speed-btn.active {
   color: #1a1410;
   background: var(--gold);

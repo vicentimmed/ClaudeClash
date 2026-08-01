@@ -53,6 +53,7 @@ export class AdminPanel {
   private draft: Balance;
   private speed = 1 as SpeedMultiplier;
   private elixirSpeed = 1 as SpeedMultiplier;
+  private botEnabled = true;
   private speedBtns: HTMLButtonElement[] = [];
   private elixirSpeedBtns: HTMLButtonElement[] = [];
 
@@ -61,6 +62,7 @@ export class AdminPanel {
     private onApply: (balance: Balance) => void,
     private onSpeedChange: (speed: SpeedMultiplier) => void,
     private onElixirSpeedChange: (speed: SpeedMultiplier) => void,
+    private onBotEnabledChange: (enabled: boolean) => void,
   ) {
     this.draft = structuredClone(balance);
     this.el = document.getElementById('admin')!;
@@ -91,10 +93,16 @@ export class AdminPanel {
     return this.el.querySelector<T>(`[data-role="${role}"]`)!;
   }
 
-  open(balance: Balance, gameSpeed: SpeedMultiplier = 1, elixirSpeed: SpeedMultiplier = 1) {
+  open(
+    balance: Balance,
+    gameSpeed: SpeedMultiplier = 1,
+    elixirSpeed: SpeedMultiplier = 1,
+    botEnabled = true,
+  ) {
     this.draft = structuredClone(balance);
     this.speed = gameSpeed;
     this.elixirSpeed = elixirSpeed;
+    this.botEnabled = botEnabled;
     this.render();
     this.el.classList.add('show');
   }
@@ -156,7 +164,30 @@ export class AdminPanel {
     box.appendChild(
       this.speedRow('Velocidade do elixir', this.elixirSpeed, (s) => this.setElixirSpeed(s), 'elixirSpeedBtns'),
     );
+    box.appendChild(this.botRow());
     return box;
+  }
+
+  private botRow(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'speed-row';
+    const label = document.createElement('span');
+    label.className = 'speed-label';
+    label.textContent = 'Inimigo (CPU)';
+    row.appendChild(label);
+
+    const toggle = document.createElement('label');
+    toggle.className = 'dev-toggle';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = this.botEnabled;
+    input.addEventListener('change', () => {
+      this.botEnabled = input.checked;
+      this.onBotEnabledChange(input.checked);
+    });
+    toggle.append(input, document.createTextNode(' Joga cartas'));
+    row.appendChild(toggle);
+    return row;
   }
 
   private speedRow(

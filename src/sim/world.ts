@@ -1,4 +1,4 @@
-import { ARENA, TOWER_SPOTS, nearestBridgeX } from './arena';
+import { ARENA, ARENA_SQUASH, TOWER_SPOTS, nearestBridgeX } from './arena';
 import type {
   Balance,
   CardDef,
@@ -8,9 +8,12 @@ import type {
   MatchResult,
   PendingSpell,
   Projectile,
+  RageZone,
   Side,
   Team,
+  TowerKind,
 } from './types';
+import { towerProjectileOrigin } from '../render/shapes';
 
 const dist = (ax: number, ay: number, bx: number, by: number) =>
   Math.hypot(ax - bx, ay - by);
@@ -66,6 +69,8 @@ export class World {
   private pendingSpawns: PendingSpawn[] = [];
   /** transient visual events, drained by the renderer every frame */
   effects: Effect[] = [];
+  /** Rage spell pools — liquid stain on the ground while the buff is active */
+  rageZones: RageZone[] = [];
 
   elixir: [number, number];
   time = 0;
@@ -77,6 +82,9 @@ export class World {
 
   /** Dev-only multiplier for elixir regen (does not affect units or match clock). */
   elixirSpeedMul = 1;
+
+  /** Last card played per team — used by Mirror. */
+  lastPlayed: [string | null, string | null] = [null, null];
 
   private nextId = 1;
 
@@ -180,24 +188,36 @@ export class World {
   /** Returns true if the card was actually played. */
   deploy(team: Team, cardId: string, x: number, y: number): boolean {
     if (this.phase === 'over') return false;
-    const card: CardDef | undefined = this.b.cards[cardId];
-    if (!card) return false;
-    if (this.elixir[team] < card.cost) return false;
-    if (!this.canDeploy(team, x, y, cardId)) return false;
+    let effectiveId = cardId;
+    const mirrorCard = this.b.cards[cardId];
+    if (!mirrorCard) return false;
 
-    this.elixir[team] -= card.cost;
+    if (mirrorCard.mirror) {
+      const last = this.lastPlayed[team];
+      if (!last || last === 'mirror') return false;
+      effectiveId = last;
+    }
+
+    const card: CardDef | undefined = this.b.cards[effectiveId];
+    if (!card) return false;
+    const cost = mirrorCard.mirror ? card.cost + 1 : mirrorCard.cost;
+    if (this.elixir[team] < cost) return false;
+    if (!this.canDeploy(team, x, y, effectiveId)) return false;
+
+    this.elixir[team] -= cost;
 
     if (card.kind === 'spell') {
-      this.castSpell(team, cardId, card, x, y);
-      return true;
+      this.castSpell(team, effectiveId, card, x, y);
+    } else {
+      const shape = FORMATIONS[card.count] ?? FORMATIONS[1];
+      for (let i = 0; i < card.count; i++) {
+        const [ox, oy] = shape[i % shape.length];
+        this.spawnTroop(team, effectiveId, card, x + ox, y + oy);
+      }
+      this.effects.push({ type: 'deploy', x, y });
     }
 
-    const shape = FORMATIONS[card.count] ?? FORMATIONS[1];
-    for (let i = 0; i < card.count; i++) {
-      const [ox, oy] = shape[i % shape.length];
-      this.spawnTroop(team, cardId, card, x + ox, y + oy);
-    }
-    this.effects.push({ type: 'deploy', x, y });
+    this.lastPlayed[team] = cardId;
     return true;
   }
 
@@ -207,21 +227,34 @@ export class World {
    * real Fireball — damage only lands when `stepPendingSpells` sees it arrive.
    */
   private castSpell(team: Team, cardId: string, card: CardDef, x: number, y: number) {
-    const originY = team === 0 ? ARENA.height + 1.6 : -1.6;
+    let originX = x;
+    let originY = team === 0 ? ARENA.height + 1.6 : -1.6;
+    let duration = Math.max(0.2, card.deployTime || 0.8);
+
+    if (card.spellFromKing) {
+      const king = TOWER_SPOTS.find((s) => s.team === team && s.towerKind === 'king');
+      if (king) {
+        originX = king.x;
+        originY = king.y;
+      }
+      const travel = dist(originX, originY, x, y);
+      duration = Math.max(0.7, travel / 7.5);
+    }
+
     this.pendingSpells.push({
       id: this.nextId++,
       team,
       cardId,
-      x0: x,
+      x0: originX,
       y0: originY,
-      x,
+      x: originX,
       y: originY,
-      px: x,
+      px: originX,
       py: originY,
       tx: x,
       ty: y,
       t: 0,
-      duration: Math.max(0.2, card.deployTime || 0.8),
+      duration,
       damage: card.damage,
       splashRadius: card.splashRadius,
       towerDamageFactor: card.towerDamageFactor,
@@ -232,6 +265,90 @@ export class World {
     });
   }
 
+  private resolveSpellImpact(s: PendingSpell) {
+    const card = this.b.cards[s.cardId];
+    if (!card) return;
+
+    if (s.cardId === 'goblin_barrel') {
+      this.effects.push({
+        type: 'spell',
+        x: s.tx,
+        y: s.ty,
+        radius: s.splashRadius,
+        shape: s.shape,
+      });
+      const summon = card.spellSpawnCardId ? this.b.cards[card.spellSpawnCardId] : undefined;
+      if (summon) {
+        const shape = FORMATIONS[card.spellSpawnCount ?? 3] ?? FORMATIONS[3];
+        for (let i = 0; i < (card.spellSpawnCount ?? 3); i++) {
+          const [ox, oy] = shape[i % shape.length];
+          this.pendingSpawns.push({
+            team: s.team,
+            cardId: card.spellSpawnCardId!,
+            x: s.tx + ox,
+            y: s.ty + oy,
+            t: 1.1,
+          });
+        }
+      }
+      return;
+    }
+
+    if (s.cardId === 'rage') {
+      if (s.damage > 0) {
+        this.splashDamage(s.team, s.tx, s.ty, s.splashRadius, s.damage, s.towerDamageFactor, undefined, s.cardId);
+      }
+      const duration = card.buffDurationSec ?? 5.5;
+      this.rageZones.push({
+        id: this.nextId++,
+        team: s.team,
+        x: s.tx,
+        y: s.ty,
+        radius: s.splashRadius,
+        timeLeft: duration,
+        duration,
+        body: s.body,
+        accent: s.accent,
+      });
+      this.applyRageZoneBuff(s.tx, s.ty, s.splashRadius, s.team, duration, card);
+      this.effects.push({ type: 'spell', x: s.tx, y: s.ty, radius: s.splashRadius, shape: s.shape });
+      return;
+    }
+
+    if (s.cardId === 'freeze') {
+      if (s.damage > 0) {
+        this.splashDamage(s.team, s.tx, s.ty, s.splashRadius, s.damage, s.towerDamageFactor, undefined, s.cardId);
+      }
+      const enemy: Team = s.team === 0 ? 1 : 0;
+      const freezeSec = card.freezeSec ?? 4.0;
+      for (const o of this.entities) {
+        if (o.team !== enemy || o.hp <= 0) continue;
+        if (dist(s.tx, s.ty, o.x, o.y) - o.radius > s.splashRadius) continue;
+        o.stunLeft = Math.max(o.stunLeft, freezeSec);
+        o.attackCd = Math.max(o.attackCd, freezeSec);
+        if (o.infernoStage !== undefined) {
+          o.infernoStage = 0;
+          o.infernoStageT = 0;
+          o.infernoTargetId = null;
+        }
+      }
+      this.effects.push({ type: 'spell', x: s.tx, y: s.ty, radius: s.splashRadius, shape: s.shape });
+      return;
+    }
+
+    this.splashDamage(s.team, s.tx, s.ty, s.splashRadius, s.damage, s.towerDamageFactor, undefined, s.cardId);
+    if (s.stunSec > 0) {
+      const enemy: Team = s.team === 0 ? 1 : 0;
+      for (const o of this.entities) {
+        if (o.team !== enemy || o.hp <= 0 || o.kind === 'tower') continue;
+        if (dist(s.tx, s.ty, o.x, o.y) - o.radius > s.splashRadius) continue;
+        o.stunLeft = Math.max(o.stunLeft, s.stunSec);
+        o.attackCd = Math.max(o.attackCd, s.stunSec);
+      }
+    }
+    this.effects.push({ type: 'spell', x: s.tx, y: s.ty, radius: s.splashRadius, shape: s.shape });
+  }
+
   private stepPendingSpells(dt: number) {
     for (const s of this.pendingSpells) {
       s.t += dt;
@@ -239,35 +356,43 @@ export class World {
       s.x = s.x0 + (s.tx - s.x0) * k;
       s.y = s.y0 + (s.ty - s.y0) * k;
       if (k >= 1) {
-        this.splashDamage(
-          s.team,
-          s.tx,
-          s.ty,
-          s.splashRadius,
-          s.damage,
-          s.towerDamageFactor,
-          undefined,
-          s.cardId,
-        );
-        if (s.stunSec > 0) {
-          const enemy: Team = s.team === 0 ? 1 : 0;
-          for (const o of this.entities) {
-            if (o.team !== enemy || o.hp <= 0 || o.kind === 'tower') continue;
-            if (dist(s.tx, s.ty, o.x, o.y) - o.radius > s.splashRadius) continue;
-            o.stunLeft = Math.max(o.stunLeft, s.stunSec);
-            o.attackCd = Math.max(o.attackCd, s.stunSec);
-          }
-        }
-        this.effects.push({
-          type: 'spell',
-          x: s.tx,
-          y: s.ty,
-          radius: s.splashRadius,
-          shape: s.shape,
-        });
+        this.resolveSpellImpact(s);
       }
     }
     this.pendingSpells = this.pendingSpells.filter((s) => s.t < s.duration);
+  }
+
+  private applyRageZoneBuff(
+    x: number,
+    y: number,
+    radius: number,
+    team: Team,
+    duration: number,
+    card: CardDef,
+  ) {
+    const speedMul = card.buffSpeedMul ?? 1.35;
+    const attackMul = card.buffAttackMul ?? 1.35;
+    for (const o of this.entities) {
+      if (o.team !== team || o.hp <= 0 || o.kind === 'tower') continue;
+      if (dist(x, y, o.x, o.y) - o.radius > radius) continue;
+      o.rageLeft = Math.max(o.rageLeft ?? 0, duration);
+      o.rageSpeedMul = speedMul;
+      o.rageAttackMul = attackMul;
+    }
+  }
+
+  private stepRageZones(dt: number) {
+    const card = this.b.cards.rage;
+    if (!card) return;
+    for (let i = this.rageZones.length - 1; i >= 0; i--) {
+      const z = this.rageZones[i];
+      z.timeLeft -= dt;
+      if (z.timeLeft <= 0) {
+        this.rageZones.splice(i, 1);
+        continue;
+      }
+      this.applyRageZoneBuff(z.x, z.y, z.radius, z.team, z.timeLeft, card);
+    }
   }
 
   private spawnTroop(
@@ -319,6 +444,13 @@ export class World {
       chargeTargetId: null,
       hidden: card.hidesUnderground ? false : undefined,
       towerFocusLocked: false,
+      infernoStage: card.infernoStages ? 0 : undefined,
+      infernoStageT: card.infernoStages ? 0 : undefined,
+      infernoTargetId: card.infernoStages ? null : undefined,
+      rageLeft: 0,
+      rageSpeedMul: 1,
+      rageAttackMul: 1,
+      deploySplashPending: card.deploySplashDamage ? true : undefined,
       active: true,
       rubble: false,
     });
@@ -367,7 +499,28 @@ export class World {
   /** Summon troops when a spawner building is destroyed or expires. */
   private deathSpawn(e: Entity) {
     const card = this.b.cards[e.cardId];
-    if (!card?.deathSpawnCardId || !card.deathSpawnCount) return;
+    if (!card) return;
+
+    if (card.deathSplashDamage && card.deathSplashRadius) {
+      this.splashDamage(e.team, e.x, e.y, card.deathSplashRadius, card.deathSplashDamage, 1, e);
+      this.effects.push({ type: 'splash', x: e.x, y: e.y, radius: card.deathSplashRadius });
+    }
+
+    const splitId = card.deathSplitCardId;
+    const splitCount = card.deathSplitCount;
+    if (splitId && splitCount) {
+      const summon = this.b.cards[splitId];
+      if (summon) {
+        for (let i = 0; i < splitCount; i++) {
+          const [ox, oy] = SPAWN_PLUS[i % SPAWN_PLUS.length];
+          this.spawnTroop(e.team, splitId, summon, e.x + ox, e.y + oy, true);
+        }
+        this.effects.push({ type: 'deploy', x: e.x, y: e.y });
+      }
+      return;
+    }
+
+    if (!card.deathSpawnCardId || !card.deathSpawnCount) return;
     const summon = this.b.cards[card.deathSpawnCardId];
     if (!summon) return;
 
@@ -446,17 +599,39 @@ export class World {
       }
       if (e.deployLeft > 0) {
         e.deployLeft -= dt;
-        if (e.deployLeft <= 0) e.state = 'moving';
+        if (e.deployLeft <= 0) {
+          e.state = 'moving';
+          if (e.deploySplashPending) {
+            this.deploySplash(e);
+            e.deploySplashPending = false;
+          }
+        }
         continue;
+      }
+      if (e.rageLeft && e.rageLeft > 0) {
+        e.rageLeft -= dt;
+        if (e.rageLeft <= 0) {
+          e.rageSpeedMul = 1;
+          e.rageAttackMul = 1;
+        }
       }
       if (e.stunLeft > 0) {
         if (this.b.cards[e.cardId]?.chargeDistTiles) this.resetCharge(e);
+        if (e.jumping) {
+          e.jumping = false;
+          e.jumpT = undefined;
+          e.jumpLandLeft = 0;
+        }
         e.stunLeft -= dt;
         this.stepSpawner(e, dt);
         this.stepHiddenBuilding(e);
         continue;
       }
       if (e.attackCd > 0) e.attackCd -= dt;
+      if (e.jumpLandLeft && e.jumpLandLeft > 0) {
+        e.jumpLandLeft -= dt;
+        if (e.jumpLandLeft < 0) e.jumpLandLeft = 0;
+      }
       this.stepSpawner(e, dt);
       this.stepHiddenBuilding(e);
       this.stepEntity(e, dt);
@@ -465,6 +640,7 @@ export class World {
     this.stepProjectiles(dt);
     this.stepPendingSpells(dt);
     this.stepPendingSpawns(dt);
+    this.stepRageZones(dt);
     this.separate();
     this.cleanup();
     this.checkEnd();
@@ -537,6 +713,11 @@ export class World {
 
     const card = this.b.cards[e.cardId];
 
+    if (e.jumping && card?.jumpMinDist) {
+      this.stepMegaKnightJump(e, dt, card);
+      return;
+    }
+
     const target = this.acquireTarget(e);
     const prevTargetId = e.targetId;
     e.targetId = target ? target.id : null;
@@ -554,7 +735,7 @@ export class World {
     }
 
     const d = dist(e.x, e.y, target.x, target.y);
-    const reach = e.range + e.radius + target.radius;
+    const reach = this.meleeReach(e, target);
 
     if (d <= reach) {
       e.state = 'attacking';
@@ -563,7 +744,7 @@ export class World {
       }
       if (target.x !== e.x) e.facing = target.x < e.x ? -1 : 1;
       if (e.attackCd <= 0 && e.active) {
-        e.attackCd = e.attackSpeed;
+        e.attackCd = e.attackSpeed / (e.rageAttackMul ?? 1);
         e.swing = 1;
         const dmg =
           e.charging && card?.chargeDamageMul ? e.damage * card.chargeDamageMul : e.damage;
@@ -578,13 +759,33 @@ export class World {
       return;
     }
 
+    // Mega Knight jump — slow arc, damage on landing
+    if (card?.jumpMinDist && card.jumpMaxDist && card.jumpDamage && !e.jumping) {
+      const edgeD = d - target.radius;
+      if (edgeD >= card.jumpMinDist && edgeD <= card.jumpMaxDist && e.attackCd <= 0) {
+        const jx = target.x + (e.x - target.x) * 0.25;
+        const jy = target.y + (e.y - target.y) * 0.25;
+        e.jumping = true;
+        e.jumpFromX = e.x;
+        e.jumpFromY = e.y;
+        e.jumpTargetX = jx;
+        e.jumpTargetY = jy;
+        e.jumpT = 0;
+        e.jumpLandLeft = 0;
+        e.state = 'moving';
+        if (target.x !== e.x) e.facing = target.x < e.x ? -1 : 1;
+        return;
+      }
+    }
+
     e.state = 'moving';
     const [wx, wy] = this.waypoint(e, target.x, target.y);
     const dx = wx - e.x;
     const dy = wy - e.y;
     const len = Math.hypot(dx, dy);
     if (len < 1e-4) return;
-    const stepLen = Math.min(e.speed * dt, len);
+    const moveSpeed = e.speed * (e.rageSpeedMul ?? 1);
+    const stepLen = Math.min(moveSpeed * dt, len);
     e.x += (dx / len) * stepLen;
     e.y += (dy / len) * stepLen;
     if (Math.abs(dx) > 0.05) e.facing = dx < 0 ? -1 : 1;
@@ -599,6 +800,28 @@ export class World {
     }
   }
 
+  /** Mega Knight: heavy leap — position lerps slowly; splash fires when he lands. */
+  private stepMegaKnightJump(e: Entity, dt: number, card: CardDef) {
+    const duration = card.jumpDurationSec ?? 1.05;
+    e.jumpT = (e.jumpT ?? 0) + dt;
+    const k = Math.min(1, e.jumpT / duration);
+    const ease = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2;
+    e.x = e.jumpFromX! + (e.jumpTargetX! - e.jumpFromX!) * ease;
+    e.y = e.jumpFromY! + (e.jumpTargetY! - e.jumpFromY!) * ease;
+    e.state = 'moving';
+    if (k < 1) return;
+
+    e.jumping = false;
+    e.x = e.jumpTargetX!;
+    e.y = e.jumpTargetY!;
+    e.jumpT = undefined;
+    this.splashDamage(e.team, e.x, e.y, card.jumpRadius ?? 2.5, card.jumpDamage!, 1, e);
+    this.effects.push({ type: 'splash', x: e.x, y: e.y, radius: card.jumpRadius ?? 2.5 });
+    e.attackCd = 0.65;
+    e.swing = 1;
+    e.jumpLandLeft = 0.42;
+  }
+
   /** Prince: end charge and restore normal movement. */
   private resetCharge(e: Entity) {
     const card = this.b.cards[e.cardId];
@@ -608,6 +831,27 @@ export class World {
     e.chargeTargetId = null;
     e.speed = card.speed;
     e.jumpsRiver = card.jumpsRiver;
+  }
+
+  /** Mega Knight landing shockwave when deploy finishes. */
+  private deploySplash(e: Entity) {
+    const card = this.b.cards[e.cardId];
+    if (!card?.deploySplashDamage) return;
+    this.splashDamage(
+      e.team,
+      e.x,
+      e.y,
+      card.deploySplashRadius ?? 2.5,
+      card.deploySplashDamage,
+      1,
+      e,
+    );
+    this.effects.push({
+      type: 'splash',
+      x: e.x,
+      y: e.y,
+      radius: card.deploySplashRadius ?? 2.5,
+    });
   }
 
   /**
@@ -689,16 +933,60 @@ export class World {
     return best;
   }
 
+  /**
+   * How close a melee unit must be before it stops and swings.
+   * Self-centred splash (Valkyrie) uses the spin radius; others use weapon reach.
+   */
+  private meleeReach(e: Entity, target: Entity): number {
+    if (e.splashRadius > 0 && e.projectileSpeed <= 0 && !e.flying) {
+      return e.splashRadius + target.radius;
+    }
+    return e.range + e.radius + target.radius;
+  }
+
   private fire(e: Entity, target: Entity, damageOverride?: number) {
-    const dmg = damageOverride ?? e.damage;
+    const card = this.b.cards[e.cardId];
+    let dmg = damageOverride ?? e.damage;
+
+    if (card?.infernoStages) {
+      if (e.infernoTargetId !== target.id) {
+        e.infernoStage = 0;
+        e.infernoStageT = 0;
+        e.infernoTargetId = target.id;
+      } else {
+        e.infernoStageT = (e.infernoStageT ?? 0) + e.attackSpeed;
+        const maxStage = card.infernoStages.length - 1;
+        if (
+          e.infernoStageT >= (card.infernoStageSec ?? 1.2) &&
+          (e.infernoStage ?? 0) < maxStage
+        ) {
+          e.infernoStage = (e.infernoStage ?? 0) + 1;
+          e.infernoStageT = 0;
+        }
+      }
+      dmg = card.infernoStages[e.infernoStage ?? 0];
+    }
+
     if (e.projectileSpeed > 0) {
+      let sx = e.x;
+      let sy = e.y - 0.4;
+      if (e.kind === 'tower' && e.towerKind) {
+        const bowFlip = e.side === 'right' ? -1 : 1;
+        const aimRad = Math.atan2(target.y - e.y, target.x - e.x);
+        const origin = towerProjectileOrigin(e.towerKind as TowerKind, ARENA_SQUASH, e.active, {
+          bowFlip,
+          aimRad,
+        });
+        sx = e.x + origin.ox;
+        sy = e.y + origin.oy;
+      }
       this.projectiles.push({
         id: this.nextId++,
         team: e.team,
-        x: e.x,
-        y: e.y - 0.4,
-        px: e.x,
-        py: e.y - 0.4,
+        x: sx,
+        y: sy,
+        px: sx,
+        py: sy,
         targetId: target.id,
         speed: e.projectileSpeed,
         damage: dmg,
@@ -713,7 +1001,7 @@ export class World {
       });
       return;
     }
-    // instant ranged zap (Tesla)
+    // instant ranged zap (Tesla, Inferno)
     if (e.projectileSpeed <= 0 && e.range > 1.2 && e.kind === 'building') {
       this.damage(target, dmg, { attacker: e });
       if (e.cardId === 'tesla') {
@@ -725,13 +1013,31 @@ export class World {
           y1: target.y - 0.3,
         });
         this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#8ff0ff' });
+      } else if (e.cardId === 'inferno') {
+        this.effects.push({
+          type: 'infernoBeam',
+          x0: e.x,
+          y0: e.y - 0.45,
+          x1: target.x,
+          y1: target.y - 0.3,
+          stage: e.infernoStage ?? 0,
+        });
+        this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#ff4422' });
       } else {
         this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#fff2c4' });
       }
       return;
     }
-    // melee: splash is centred on the attacker so it reads as a 360° swing
-    if (e.splashRadius > 0) {
+    // melee: splash is centred on the attacker so it reads as a 360° spin (Valkyrie)
+    if (e.splashRadius > 0 && e.projectileSpeed <= 0 && !e.flying) {
+      this.splashDamage(e.team, e.x, e.y, e.splashRadius, dmg, 1, e);
+      // At max melee reach the primary target can sit just outside the splash disc (large towers).
+      if (dist(e.x, e.y, target.x, target.y) - target.radius > e.splashRadius) {
+        this.damage(target, dmg, { attacker: e });
+        this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#fff2c4' });
+      }
+      this.effects.push({ type: 'splash', x: e.x, y: e.y, radius: e.splashRadius });
+    } else if (e.splashRadius > 0) {
       this.splashDamage(e.team, e.x, e.y, e.splashRadius, dmg, 1, e);
       this.effects.push({ type: 'splash', x: e.x, y: e.y, radius: e.splashRadius });
     } else {
@@ -808,7 +1114,7 @@ export class World {
     this.resetTowerFocusIfHit(target, opts);
   }
 
-  /** Tesla zap and Choque spell reset tower focus on troops that can attack units. */
+  /** Tesla zap and Zap spell reset tower focus on troops that can attack units. */
   private resetTowerFocusIfHit(
     target: Entity,
     opts?: { attacker?: Entity; spellCardId?: string },

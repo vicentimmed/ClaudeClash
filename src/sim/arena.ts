@@ -15,6 +15,9 @@ export const ARENA = {
   bridgeHalfWidth: 1.05,
 } as const;
 
+/** Vertical squash used by the renderer — tower muzzle math stays aligned with sprites. */
+export const ARENA_SQUASH = 0.72;
+
 export interface TowerSpot {
   team: Team;
   towerKind: TowerKind;

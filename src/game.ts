@@ -1,6 +1,14 @@
 import { Container, Graphics, type Ticker } from 'pixi.js';
 import { GameAudio } from './audio';
-import { loadBalance, loadSavedDeck, saveBalance, saveDeck } from './balance';
+import {
+  cardArtShape,
+  deckSelectableIds,
+  loadBalance,
+  loadSavedDeck,
+  saveBalance,
+  saveDeck,
+  sanitizeDeck,
+} from './balance';
 import { loadDevSettings, saveDevSettings, type SpeedMultiplier } from './dev/settings';
 import { Renderer } from './render/renderer';
 import { drawUnit } from './render/shapes';
@@ -30,8 +38,10 @@ export class Game {
   private wasElixirFull = false;
   private lastTimerTick = -1;
   private running = false;
-  private gameSpeed: SpeedMultiplier = loadDevSettings().gameSpeed;
-  private elixirSpeed: SpeedMultiplier = loadDevSettings().elixirSpeed;
+  private devSettings = loadDevSettings();
+  private gameSpeed: SpeedMultiplier = this.devSettings.gameSpeed;
+  private elixirSpeed: SpeedMultiplier = this.devSettings.elixirSpeed;
+  private botEnabled = this.devSettings.botEnabled;
 
   private stage!: HTMLElement;
   private hint!: HTMLElement;
@@ -51,7 +61,7 @@ export class Game {
       onRestart: () => this.openDeckBuilder(),
       onOpenAdmin: () => {
         this.audio.play('uiTap');
-        this.admin.open(this.balance, this.gameSpeed, this.elixirSpeed);
+        this.admin.open(this.balance, this.gameSpeed, this.elixirSpeed, this.botEnabled);
       },
       onToggleSound: () => this.toggleSound(),
       onEditDeck: () => {
@@ -67,9 +77,13 @@ export class Game {
       (balance) => this.applyBalance(balance),
       (gameSpeed) => this.setGameSpeed(gameSpeed),
       (elixirSpeed) => this.setElixirSpeed(elixirSpeed),
+      (enabled) => this.setBotEnabled(enabled),
     );
 
-    this.deckBuilder = new DeckBuilder(this.balance, (cardId, size) => this.makeArt(cardId, size), {
+    this.deckBuilder = new DeckBuilder(
+      this.balance,
+      (cardId, size) => this.makeArt(cardId, size, this.deckArtFillBoost(cardId)),
+      {
       onStart: (deck) => this.startMatch(deck),
       onTap: () => this.audio.play('uiTap'),
       onToggleSound: () => this.toggleSound(),
@@ -112,7 +126,7 @@ export class Game {
     this.renderer.zoneMode = 'none';
     this.hint.style.display = 'none';
     // empty slots the very first time; the deck the player last played after that
-    this.deckBuilder.open(loadSavedDeck() ?? []);
+    this.deckBuilder.open(sanitizeDeck(this.balance, loadSavedDeck() ?? []));
     void this.audio.unlock().then(() => {
       if (this.audio.musicOn && !this.running) this.audio.startMusic('deck');
     });
@@ -149,7 +163,7 @@ export class Game {
   }
 
   private randomBotDeck(): string[] {
-    const ids = Object.keys(this.balance.cards);
+    const ids = deckSelectableIds(this.balance);
     for (let i = ids.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [ids[i], ids[j]] = [ids[j], ids[i]];
@@ -178,15 +192,28 @@ export class Game {
 
   private setGameSpeed(speed: SpeedMultiplier) {
     this.gameSpeed = speed;
-    saveDevSettings({ gameSpeed: speed, elixirSpeed: this.elixirSpeed });
+    this.persistDevSettings();
     this.ui.setDevSpeeds(speed, this.elixirSpeed);
   }
 
   private setElixirSpeed(speed: SpeedMultiplier) {
     this.elixirSpeed = speed;
     if (this.world) this.world.elixirSpeedMul = speed;
-    saveDevSettings({ gameSpeed: this.gameSpeed, elixirSpeed: speed });
+    this.persistDevSettings();
     this.ui.setDevSpeeds(this.gameSpeed, speed);
+  }
+
+  private setBotEnabled(enabled: boolean) {
+    this.botEnabled = enabled;
+    this.persistDevSettings();
+  }
+
+  private persistDevSettings() {
+    saveDevSettings({
+      gameSpeed: this.gameSpeed,
+      elixirSpeed: this.elixirSpeed,
+      botEnabled: this.botEnabled,
+    });
   }
 
   // ------------------------------------------------------------------ input
@@ -226,6 +253,10 @@ export class Game {
         fireball: 0xffa63d,
         arrows: 0xd4c4a0,
         zap: 0x8ff0ff,
+        rage: 0xff6ec7,
+        freeze: 0xb3e5fc,
+        goblin_barrel: 0xc9a86c,
+        mirror: 0xc5e4f0,
       };
       return spellColors[cardId] ?? 0xffffff;
     }
@@ -315,7 +346,7 @@ export class Game {
       const maxSteps = Math.ceil(8 * this.gameSpeed);
       while (this.acc >= this.stepSec && guard++ < maxSteps) {
         this.world.step(this.stepSec);
-        this.bot.update(this.world, this.botHand, this.stepSec);
+        if (this.botEnabled) this.bot.update(this.world, this.botHand, this.stepSec);
         this.acc -= this.stepSec;
       }
       this.reactToState();
@@ -383,20 +414,55 @@ export class Game {
   // -------------------------------------------------------------- card art
 
   /** Renders a unit off-screen so the cards use the exact same art as the arena. */
-  private makeArt(cardId: string, size: number): string {
+  private makeArt(cardId: string, size: number, fillBoost = 1): string {
     const card = this.balance.cards[cardId];
     const holder = new Container();
     const bounds = new Graphics();
     bounds.rect(0, 0, size, size).fill({ color: 0x000000, alpha: 0.001 });
     const art = new Graphics();
-    const h = size * (0.52 + 0.3 * Math.min(1, card.visual.scale / 2));
-    drawUnit(art, card.visual.shape, h, card.visual.body, card.visual.accent, 0);
+    const h =
+      size *
+      (0.52 + 0.3 * Math.min(1, card.visual.scale / 2)) *
+      fillBoost *
+      (cardId === 'giant'
+        ? 1.1
+        : cardId === 'mirror'
+            ? 1.05
+            : cardId === 'inferno'
+              ? 1.04
+              : cardId === 'mega_knight'
+                ? 1.06
+                : cardId === 'balloon'
+                  ? 1.05
+                  : cardId === 'goblin_barrel'
+                    ? 1.08
+                    : cardId === 'skeleton_army'
+                      ? 1.08
+                      : cardId === 'goblins'
+                        ? 1.12
+                        : 1);
+    drawUnit(
+      art,
+      cardArtShape(cardId, card.visual.shape),
+      h,
+      card.visual.body,
+      card.visual.accent,
+      0,
+      fillBoost > 1 && cardId === 'minions' ? { swarmScale: 1.08 } : undefined,
+    );
     art.position.set(size / 2, size * 0.94);
     holder.addChild(bounds, art);
     const canvas = this.renderer.app.renderer.extract.canvas(holder) as HTMLCanvasElement;
     const url = canvas.toDataURL('image/png');
     holder.destroy({ children: true });
     return url;
+  }
+
+  /** Extra fill in the deck builder so small swarm troops read clearly on card thumbnails. */
+  private deckArtFillBoost(cardId: string): number {
+    if (cardId === 'goblins') return 1.14;
+    if (cardId === 'minions') return 1.22;
+    return 1;
   }
 
   // ---------------------------------------------------------------- debug
@@ -411,7 +477,7 @@ export class Game {
     for (let i = 0; i < steps; i++) {
       if (this.world.phase === 'over') break;
       this.world.step(this.stepSec);
-      this.bot.update(this.world, this.botHand, this.stepSec);
+      if (this.botEnabled) this.bot.update(this.world, this.botHand, this.stepSec);
     }
     // age particles by the whole skipped span so fast-forwarding doesn't pile up FX
     this.renderer.draw(this.world, 1, Math.min(seconds, 0.5));

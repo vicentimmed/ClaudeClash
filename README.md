@@ -51,7 +51,7 @@ escolhido fica salvo. O bot sorteia 8 cartas a cada partida.
 | Dragão Bebê | 4 | 1152 | 133 | 1,0 | ar + terra | **voa**, área |
 | Corredor | 4 | 1696 | 264 | 1,67 | só construções | **pula o rio** |
 | Gigante | 5 | 3275 | 211 | 0,67 | só construções | ignora tropas |
-| Bruxo | 5 | 720 | 281 | 1,0 | ar + terra | área à distância |
+| Mago | 5 | 720 | 281 | 1,0 | ar + terra | área à distância |
 
 **Construção**
 
@@ -63,7 +63,7 @@ escolhido fica salvo. O bot sorteia 8 cartas a cada partida.
 
 | Carta | 💧 | Dano | Raio | Observação |
 |---|---|---|---|---|
-| Choque | 2 | 159 | 2,5 | atordoa 0,5 s |
+| Zap | 2 | 159 | 2,5 | atordoa 0,5 s |
 | Flechas | 3 | 243 | 4,0 | antienxame |
 | Bola de Fogo | 4 | 572 | 2,5 | o maior dano |
 

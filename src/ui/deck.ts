@@ -1,4 +1,5 @@
 import { shade } from '../render/shapes';
+import { deckSelectableIds } from '../balance';
 import type { Balance, CardKind } from '../sim/types';
 
 const KIND_LABEL: Record<CardKind, string> = {
@@ -115,7 +116,7 @@ export class DeckBuilder {
   private buildPool() {
     this.poolEl.innerHTML = '';
     this.poolCards = [];
-    const ids = Object.keys(this.balance.cards).sort(
+    const ids = deckSelectableIds(this.balance).sort(
       (a, b) => this.balance.cards[a].cost - this.balance.cards[b].cost,
     );
     for (const id of ids) {
@@ -139,7 +140,7 @@ export class DeckBuilder {
   }
 
   private randomDeck(): (string | undefined)[] {
-    const ids = Object.keys(this.balance.cards);
+    const ids = deckSelectableIds(this.balance);
     for (let i = ids.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [ids[i], ids[j]] = [ids[j], ids[i]];
@@ -371,7 +372,9 @@ export class DeckBuilder {
 
   setBalance(balance: Balance) {
     this.balance = balance;
-    this.slots = this.slots.map((id) => (id && balance.cards[id] ? id : undefined));
+    this.slots = this.slots.map((id) =>
+      id && balance.cards[id] && !balance.cards[id].spawnOnly ? id : undefined,
+    );
     if (this.slots.length !== this.size) {
       const next = this.emptySlots();
       this.slots.forEach((id, i) => {
@@ -391,7 +394,7 @@ export class DeckBuilder {
   open(initial: string[]) {
     this.slots = this.emptySlots();
     initial
-      .filter((id) => this.balance.cards[id])
+      .filter((id) => this.balance.cards[id] && !this.balance.cards[id].spawnOnly)
       .slice(0, this.size)
       .forEach((id, i) => {
         this.slots[i] = id;

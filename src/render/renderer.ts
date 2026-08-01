@@ -2,7 +2,7 @@ import { Application, Container, Graphics, Text } from 'pixi.js';
 import { ARENA } from '../sim/arena';
 import type { Entity, Team, UnitShape } from '../sim/types';
 import type { World } from '../sim/world';
-import { TEAM_COLOR, drawLightningBolt, drawTeslaTrapdoor, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
+import { TEAM_COLOR, drawBalloonBombDrop, drawInfernoBeam, drawLightningBolt, drawRagePuddle, drawTeslaTrapdoor, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
 
 const GRASS = 0x6aa834;
 const GRASS_ALT = 0x74b23a;
@@ -10,6 +10,12 @@ const PATH = 0xc9a86c;
 const PATH_EDGE = 0xb08e56;
 const RIVER = 0x2f96c9;
 const BRIDGE = 0xa5764f;
+
+/** Gameplay draw scale — card art keeps balance `visual.scale`; troops can read larger in the arena. */
+function gameplayDrawScale(cardId: string, scale: number): number {
+  if (cardId === 'goblins') return scale * 1.18;
+  return scale;
+}
 
 const HP_FONT = {
   fontFamily: '"Baloo 2", system-ui, sans-serif',
@@ -43,6 +49,9 @@ class EntityView {
   bob = new Container();
   body = new Graphics();
   zapLine = new Graphics();
+  infernoLine = new Graphics();
+  bombFx = new Graphics();
+  spinFx = new Graphics();
   spawnRing = new Graphics();
   hpBg = new Graphics();
   hpFg = new Graphics();
@@ -54,10 +63,11 @@ class EntityView {
   lastHpRatio = -1;
   lastHpValue = -1;
   lastHidden = false;
+  lastTowerActive = false;
   dying = 0;
 
   constructor() {
-    this.root.addChild(this.shadow, this.trapdoor, this.spawnRing, this.bob, this.zapLine, this.hpBg, this.hpFg);
+    this.root.addChild(this.shadow, this.trapdoor, this.spawnRing, this.spinFx, this.bob, this.zapLine, this.infernoLine, this.bombFx, this.hpBg, this.hpFg);
     this.bob.addChild(this.body);
   }
 }
@@ -69,6 +79,8 @@ export class Renderer {
 
   private root = new Container();
   private arenaG = new Graphics();
+  private groundFxLayer = new Container();
+  private ragePuddleViews = new Map<number, Graphics>();
   private zoneG = new Graphics();
   private previewG = new Graphics();
   private entityLayer = new Container();
@@ -104,6 +116,7 @@ export class Renderer {
     this.entityLayer.sortableChildren = true;
     this.root.addChild(
       this.arenaG,
+      this.groundFxLayer,
       this.zoneG,
       this.previewG,
       this.entityLayer,
@@ -229,6 +242,39 @@ export class Renderer {
     g.rect(0, ty(top), W, 2).fill({ color: 0xffffff, alpha: 0.45 });
   }
 
+  /** Persistent Rage liquid stains on the arena floor. */
+  private drawRageGround(world: World) {
+    const alive = new Set<number>();
+    for (const z of world.rageZones) {
+      alive.add(z.id);
+      let g = this.ragePuddleViews.get(z.id);
+      if (!g) {
+        g = new Graphics();
+        this.groundFxLayer.addChild(g);
+        this.ragePuddleViews.set(z.id, g);
+      }
+      const [sx, sy] = this.toScreen(z.x, z.y);
+      g.position.set(sx, sy);
+      const fade = z.timeLeft < 0.85 ? z.timeLeft / 0.85 : 1;
+      drawRagePuddle(
+        g,
+        z.radius,
+        this.tile,
+        this.squash,
+        z.body,
+        z.accent,
+        z.id,
+        world.time,
+        fade,
+      );
+    }
+    for (const [id, g] of this.ragePuddleViews) {
+      if (alive.has(id)) continue;
+      g.destroy();
+      this.ragePuddleViews.delete(id);
+    }
+  }
+
   private drawDeployPreview() {
     const g = this.previewG;
     g.clear();
@@ -246,13 +292,37 @@ export class Renderer {
 
   // ------------------------------------------------------------------ views
 
+  private towerBowFlip(e: Entity): number {
+    return e.side === 'right' ? -1 : 1;
+  }
+
+  private towerAimRad(e: Entity, world: World): number {
+    if (e.targetId == null) return e.team === 0 ? -Math.PI / 2 : Math.PI / 2;
+    const target = world.entities.find((o) => o.id === e.targetId);
+    if (!target) return e.team === 0 ? -Math.PI / 2 : Math.PI / 2;
+    return Math.atan2(target.y - e.y, target.x - e.x);
+  }
+
   private buildView(view: EntityView, e: Entity, world: World) {
     const T = this.tile;
     view.body.clear();
     view.shadow.clear();
 
     if (e.kind === 'tower') {
-      drawTower(view.body, e.towerKind!, e.team, T, this.squash, e.hp <= 0);
+      const bowFlip = this.towerBowFlip(e);
+      const aimRad = this.towerAimRad(e, world);
+      drawTower(
+        view.body,
+        e.towerKind!,
+        e.team,
+        T,
+        this.squash,
+        e.hp <= 0,
+        e.active,
+        aimRad,
+        bowFlip,
+      );
+      if (e.towerKind === 'king') view.lastTowerActive = e.active;
       const metrics = towerMetrics(e.towerKind!, T, this.squash);
       const barW = metrics.w;
       view.hpBg.clear();
@@ -281,7 +351,7 @@ export class Renderer {
       }
     } else {
       const card = world.b.cards[e.cardId];
-      const h = card.visual.scale * T;
+      const h = gameplayDrawScale(e.cardId, card.visual.scale) * T;
       view.shadow
         .ellipse(0, 0, e.radius * T * 1.05, e.radius * T * 0.52)
         .fill({ color: 0x000000, alpha: 0.28 });
@@ -290,7 +360,13 @@ export class Renderer {
         .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: 0.85 });
       drawUnit(
         view.body,
-        e.cardId === 'skeleton_army' ? 'skeleton' : card.visual.shape,
+        e.cardId === 'skeleton_army'
+          ? 'skeleton'
+          : e.cardId === 'minions'
+            ? 'minion'
+            : e.cardId === 'goblins'
+              ? 'goblin'
+              : card.visual.shape,
         h,
         card.visual.body,
         card.visual.accent,
@@ -357,6 +433,7 @@ export class Renderer {
   draw(world: World, alpha: number, dt: number) {
     this.syncViews(world);
     this.drawZone(world);
+    this.drawRageGround(world);
     this.drawDeployPreview();
 
     const T = this.tile;
@@ -411,6 +488,26 @@ export class Renderer {
         }
       }
 
+      if (e.kind === 'tower' && e.hp > 0) {
+        if (e.towerKind === 'king' && e.active) {
+          view.body.clear();
+          drawTower(
+            view.body,
+            e.towerKind,
+            e.team,
+            T,
+            this.squash,
+            false,
+            true,
+            this.towerAimRad(e, world),
+            this.towerBowFlip(e),
+          );
+        } else if (e.towerKind === 'king' && e.active !== view.lastTowerActive) {
+          this.buildView(view, e, world);
+        }
+        view.lastTowerActive = e.towerKind === 'king' ? e.active : view.lastTowerActive;
+      }
+
       // animation
       const bob = view.bob;
       const card = world.b.cards[e.cardId];
@@ -448,19 +545,126 @@ export class Renderer {
           }
         }
       }
-      if (e.cardId === 'prince') {
-        const th = card.visual.scale * T;
-        view.body.clear();
-        drawUnit(view.body, 'prince', th, card.visual.body, card.visual.accent, e.team, {
-          animT: e.animT,
-          charging: !!e.charging,
-          swing: Math.max(0, e.swing),
-        });
+      if (e.cardId === 'inferno') {
+        view.infernoLine.clear();
+        if (e.state === 'attacking' && e.targetId && e.deployLeft <= 0 && !e.hidden) {
+          const target = byId.get(e.targetId);
+          if (target) {
+            const tx = target.px + (target.x - target.px) * alpha;
+            const ty = target.py + (target.y - target.py) * alpha;
+            const [tsx, tsy] = this.toScreen(tx, ty - 0.3);
+            const th = card.visual.scale * T;
+            const originY = -th * 0.58;
+            drawInfernoBeam(
+              view.infernoLine,
+              0,
+              originY,
+              tsx - sx,
+              tsy - sy,
+              T,
+              e.infernoStage ?? 0,
+              e.animT * 7,
+            );
+          }
+        }
+      }
+      if (card?.visual) {
+        const th = gameplayDrawScale(e.cardId, card.visual.scale) * T;
+        const swingVal = Math.max(0, e.swing);
+        const troopShape =
+          e.cardId === 'skeleton_army'
+            ? 'skeleton'
+            : e.cardId === 'minions'
+              ? 'minion'
+              : e.cardId === 'goblins'
+                ? 'goblin'
+                : card.visual.shape;
+
+        if (e.cardId === 'prince') {
+          view.body.clear();
+          drawUnit(view.body, 'prince', th, card.visual.body, card.visual.accent, e.team, {
+            animT: e.animT,
+            charging: !!e.charging,
+            swing: swingVal,
+          });
+        } else if (e.cardId === 'mega_knight') {
+          const jumpDur = card.jumpDurationSec ?? 1.05;
+          let jumpRaise = 0;
+          if (e.jumping && e.jumpT !== undefined) {
+            const k = Math.min(1, e.jumpT / jumpDur);
+            jumpRaise = k < 0.2 ? k / 0.2 : 1;
+          } else if (e.jumpLandLeft && e.jumpLandLeft > 0) {
+            jumpRaise = e.jumpLandLeft / 0.42;
+          }
+          view.body.clear();
+          drawUnit(view.body, 'mega_knight', th, card.visual.body, card.visual.accent, e.team, {
+            jumpRaise,
+            swing: swingVal,
+          });
+        } else if (e.cardId === 'xbow') {
+          view.body.clear();
+          drawUnit(view.body, 'xbow', th, card.visual.body, card.visual.accent, e.team, {
+            swing: swingVal,
+          });
+        } else if (e.cardId === 'valkyrie') {
+          const spinProg = e.state === 'attacking' && e.swing > 0.02 ? 1 - swingVal : 0;
+          view.body.clear();
+          drawUnit(view.body, 'valkyrie', th, card.visual.body, card.visual.accent, e.team, {
+            spin: spinProg,
+          });
+          view.spinFx.clear();
+          if (spinProg > 0.04) {
+            const whirlR = th * (0.52 + spinProg * 0.2);
+            for (let i = 0; i < 3; i++) {
+              const startA = spinProg * Math.PI * 2 + i * (Math.PI * 2 / 3);
+              view.spinFx
+                .arc(0, 0, whirlR * (0.86 + i * 0.07), startA, startA + Math.PI * 0.58)
+                .stroke({
+                  width: 2.8 - i * 0.65,
+                  color: i === 0 ? 0xffd98a : 0xffffff,
+                  alpha: spinProg * (0.58 - i * 0.13),
+                });
+            }
+            view.spinFx
+              .ellipse(0, 0, whirlR, whirlR * 0.34)
+              .stroke({ width: 1.6, color: 0xffffff, alpha: spinProg * 0.24 });
+          }
+        } else if (
+          e.kind === 'troop' &&
+          card.projectileSpeed === 0 &&
+          card.range <= 1.6 &&
+          e.cardId !== 'balloon'
+        ) {
+          view.body.clear();
+          drawUnit(view.body, troopShape, th, card.visual.body, card.visual.accent, e.team, {
+            swing: swingVal,
+          });
+        }
+
+        view.bombFx.clear();
+        if (e.cardId === 'balloon') {
+          view.body.clear();
+          drawUnit(view.body, 'balloon', th, card.visual.body, card.visual.accent, e.team);
+          if (e.state === 'attacking' && e.swing > 0.02 && e.targetId) {
+            const target = byId.get(e.targetId);
+            if (target) {
+              const tx = target.px + (target.x - target.px) * alpha;
+              const ty = target.py + (target.y - target.py) * alpha;
+              const [tsx, tsy] = this.toScreen(tx, ty - 0.3);
+              const drop = 1 - swingVal;
+              const startY = bob.position.y - th * 0.12 - view.flyLift;
+              drawBalloonBombDrop(view.bombFx, 0, startY, tsx - sx, tsy - sy, drop, T);
+            }
+          }
+        }
+      } else {
+        view.bombFx.clear();
       }
       if (e.kind === 'tower') {
         bob.position.y = Math.max(0, e.swing) ** 2 * T * 0.1;
       } else {
         let bobY = -view.flyLift;
+        let bobX = 0;
         bob.scale.x = e.facing >= 0 ? 1 : -1;
         if (e.deployLeft > 0) {
           const k = 1 - e.deployLeft / Math.max(0.01, world.b.cards[e.cardId].deployTime);
@@ -484,20 +688,57 @@ export class Renderer {
             const t = e.animT * 4.2;
             bobY -= Math.abs(Math.sin(t)) * T * 0.09;
             bob.rotation = Math.sin(t) * 0.035;
+          } else if (e.jumping) {
+            const jumpDur = card?.jumpDurationSec ?? 1.05;
+            const k = Math.min(1, (e.jumpT ?? 0) / jumpDur);
+            bobY -= Math.sin(k * Math.PI) * T * 2.15;
+            bob.rotation = 0;
+          } else if (e.jumpLandLeft && e.jumpLandLeft > 0) {
+            const landK = 1 - e.jumpLandLeft / 0.42;
+            bobY += landK * landK * T * 0.14;
+            bob.rotation = 0;
           } else if (e.state === 'moving' && e.speed > 0) {
             const t = e.animT * (4 + e.speed * 2.2);
             bobY -= Math.abs(Math.sin(t)) * T * 0.1;
             bob.rotation = Math.sin(t) * 0.05;
+          } else if (e.cardId === 'xbow' && e.swing > 0.05) {
+            const recoil = Math.max(0, e.swing) ** 2;
+            bobX = Math.sin(e.animT * 58) * recoil * T * 0.1;
+            bob.rotation = Math.sin(e.animT * 44 + 0.7) * recoil * 0.05;
+            bobY -= recoil * T * 0.02;
+          } else if (e.cardId === 'valkyrie' && e.state === 'attacking' && e.swing > 0.02) {
+            const spinProg = 1 - Math.max(0, e.swing);
+            bob.rotation = spinProg * Math.PI * 2 * (bob.scale.x >= 0 ? 1 : -1);
+            bobY += spinProg * T * 0.05;
           } else {
             bob.rotation = 0;
           }
           if (e.state === 'attacking') {
             const lunge = Math.max(0, e.swing) ** 2;
-            const lungeMul = e.cardId === 'prince' ? 0.22 : 0.14;
-            bobY -= lunge * T * lungeMul;
-            bob.rotation += lunge * 0.3 * (bob.scale.x >= 0 ? 1 : -1);
+            if (e.cardId === 'balloon' && lunge > 0.05) {
+              bobY -= lunge * T * 0.05;
+              bob.rotation = lunge * 0.08 * (bob.scale.x >= 0 ? 1 : -1);
+            } else if (e.cardId !== 'xbow' && e.cardId !== 'valkyrie' && e.cardId !== 'inferno') {
+              const lungeMul =
+                e.cardId === 'prince'
+                  ? 0.22
+                  : e.cardId === 'golem'
+                    ? 0.1
+                    : e.cardId === 'giant'
+                      ? 0.08
+                      : e.cardId === 'hogrider'
+                        ? 0.12
+                        : e.cardId === 'mega_knight'
+                          ? 0.14
+                          : card?.projectileSpeed === 0 && card?.range <= 1.6
+                            ? 0.12
+                            : 0.14;
+              bobY -= lunge * T * lungeMul;
+              bob.rotation += lunge * 0.3 * (bob.scale.x >= 0 ? 1 : -1);
+            }
           }
         }
+        bob.position.x = bobX;
         bob.position.y = bobY;
       }
 
@@ -506,6 +747,8 @@ export class Renderer {
           ? 0xff9c9c
           : e.stunLeft > 0
             ? 0x9fd8ff
+            : e.rageLeft && e.rageLeft > 0
+            ? 0xffaad4
             : e.cardId === 'prince' && e.charging
             ? 0xfff4c8
             : e.cardId === 'tesla' && e.state === 'attacking' && e.swing > 0.1
@@ -554,20 +797,34 @@ export class Renderer {
       const [sx, sy] = this.toScreen(x, y);
 
       entry.shadow.clear();
+      const isBarrel = s.shape === 'goblin_barrel';
+      const arcT = Math.sin(k * Math.PI);
+      const barrelScale = 0.54 + arcT * 0.78;
+      const shadowScale = isBarrel ? 0.22 + k * 0.72 : k;
       entry.shadow
-        .ellipse(0, 0, this.tile * 0.55 * k, this.tile * this.squash * 0.4 * k)
-        .fill({ color: 0x000000, alpha: 0.3 * k });
+        .ellipse(
+          0,
+          0,
+          this.tile * (isBarrel ? 0.82 : 0.55) * shadowScale,
+          this.tile * this.squash * (isBarrel ? 0.52 : 0.4) * shadowScale,
+        )
+        .fill({ color: 0x000000, alpha: (isBarrel ? 0.18 + k * 0.22 : 0.3 * k) });
       entry.shadow.position.set(tx, ty);
 
+      const spellH = this.tile * (isBarrel ? 1.55 : 0.85);
       if (!entry.drawn) {
-        drawUnit(entry.icon, s.shape, this.tile * 0.85, s.body, s.accent);
-        entry.icon.pivot.set(0, -this.tile * 0.42);
+        drawUnit(entry.icon, s.shape, spellH, s.body, s.accent);
+        entry.icon.pivot.set(0, -spellH * 0.44);
         entry.drawn = true;
       }
-      const arcLift = Math.sin(k * Math.PI) * this.tile * 1.4;
+      const arcLift = arcT * this.tile * (isBarrel ? 2.2 : 1.4);
       entry.icon.position.set(sx, sy - arcLift);
-      const scale = 0.55 + k * 0.55;
-      entry.icon.scale.set(scale);
+      entry.icon.scale.set(isBarrel ? barrelScale : 0.55 + k * 0.55);
+      if (isBarrel) {
+        entry.icon.rotation = k * Math.PI * 6;
+      } else {
+        entry.icon.rotation = 0;
+      }
     }
     for (const [id, entry] of this.spellViews) {
       if (alive.has(id)) continue;
@@ -604,9 +861,9 @@ export class Renderer {
 
   private drainEffects(world: World) {
     for (const fx of world.effects) {
-      const [sx, sy] = this.toScreen(fx.x, fx.y);
       switch (fx.type) {
-        case 'hit':
+        case 'hit': {
+          const [sx, sy] = this.toScreen(fx.x, fx.y);
           if (fx.color === '#8ff0ff') {
             this.burst(sx, sy, 0x8ff0ff, 8, this.tile * 0.1, 0.32);
             const zap = new Graphics();
@@ -618,7 +875,9 @@ export class Renderer {
             this.burst(sx, sy, hexToNum(fx.color), 5, this.tile * 0.11, 0.28);
           }
           break;
+        }
         case 'splash': {
+          const [sx, sy] = this.toScreen(fx.x, fx.y);
           const ring = new Graphics();
           ring
             .ellipse(0, 0, fx.radius * this.tile * 0.6, fx.radius * this.tile * this.squash * 0.6)
@@ -628,10 +887,13 @@ export class Renderer {
           this.particles.push({ g: ring, vx: 0, vy: 0, life: 0.26, max: 0.26, grow: 0.9, spin: 0 });
           break;
         }
-        case 'death':
+        case 'death': {
+          const [sx, sy] = this.toScreen(fx.x, fx.y);
           this.burst(sx, sy - fx.scale * this.tile * 0.4, hexToNum(fx.color), 8, this.tile * 0.14, 0.45);
           break;
+        }
         case 'deploy': {
+          const [sx, sy] = this.toScreen(fx.x, fx.y);
           const ring = new Graphics();
           ring
             .ellipse(0, 0, this.tile * 0.8, this.tile * 0.8 * this.squash)
@@ -641,13 +903,17 @@ export class Renderer {
           this.particles.push({ g: ring, vx: 0, vy: 0, life: 0.35, max: 0.35, grow: 1.2, spin: 0 });
           break;
         }
-        case 'towerDown':
+        case 'towerDown': {
+          const [sx, sy] = this.toScreen(fx.x, fx.y);
           this.burst(sx, sy - this.tile, 0xb0a696, 18, this.tile * 0.22, 0.8);
           this.shake = 0.4;
           break;
-        case 'spell':
+        }
+        case 'spell': {
+          const [sx, sy] = this.toScreen(fx.x, fx.y);
           this.spellBlast(sx, sy, fx.radius, fx.shape);
           break;
+        }
         case 'teslaZap': {
           const [sx0, sy0] = this.toScreen(fx.x0, fx.y0);
           const [sx1, sy1] = this.toScreen(fx.x1, fx.y1);
@@ -656,6 +922,16 @@ export class Renderer {
           this.fxLayer.addChild(bolt);
           this.particles.push({ g: bolt, vx: 0, vy: 0, life: 0.12, max: 0.12, grow: 0, spin: 0 });
           this.burst(sx1, sy1, 0x8ff0ff, 6, this.tile * 0.09, 0.22);
+          break;
+        }
+        case 'infernoBeam': {
+          const [sx0, sy0] = this.toScreen(fx.x0, fx.y0);
+          const [sx1, sy1] = this.toScreen(fx.x1, fx.y1);
+          const beam = new Graphics();
+          drawInfernoBeam(beam, sx0, sy0, sx1, sy1, this.tile, fx.stage, Math.random() * 10);
+          this.fxLayer.addChild(beam);
+          this.particles.push({ g: beam, vx: 0, vy: 0, life: 0.1, max: 0.1, grow: 0, spin: 0 });
+          this.burst(sx1, sy1, 0xff4422, 4, this.tile * 0.08, 0.18);
           break;
         }
       }
@@ -669,6 +945,9 @@ export class Renderer {
       fireball: { ring: 0xffa63d, bits: 0xe2622a, count: 22, shake: 0.28 },
       arrows: { ring: 0xe8e2d0, bits: 0x9a7448, count: 18, shake: 0.1 },
       zap: { ring: 0x8ff0ff, bits: 0x7b4fd6, count: 14, shake: 0.15 },
+      rage: { ring: 0xff6ec7, bits: 0xe91e8c, count: 16, shake: 0.12 },
+      freeze: { ring: 0xb3e5fc, bits: 0x7dd3fc, count: 20, shake: 0.14 },
+      goblin_barrel: { ring: 0xc9a86c, bits: 0x8a5f3d, count: 14, shake: 0.22 },
     };
     const look = looks[shape] ?? looks.fireball;
 
@@ -741,6 +1020,8 @@ export class Renderer {
     this.projViews.clear();
     for (const entry of this.spellViews.values()) entry.holder.destroy({ children: true });
     this.spellViews.clear();
+    for (const g of this.ragePuddleViews.values()) g.destroy();
+    this.ragePuddleViews.clear();
     for (const p of this.particles) p.g.destroy();
     this.particles = [];
     this.shake = 0;
