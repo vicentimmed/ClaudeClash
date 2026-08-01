@@ -560,10 +560,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-.pool-card.chosen .card-face {
-  border-color: #4a4035;
-  filter: grayscale(0.6) brightness(0.6);
-}
 .pool-card:active .card-face {
   transform: scale(0.96);
 }

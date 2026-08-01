@@ -226,8 +226,15 @@ export class DeckBuilder {
     this.avgEl.textContent = full ? `custo médio ${avg.toFixed(1)}` : '';
     this.playBtn.disabled = !full;
 
+    this.refreshPool();
+  }
+
+  /** Hide cards already in the deck so the pool grid reflows without gaps. */
+  private refreshPool() {
     const chosen = new Set(this.slots.filter(Boolean));
-    for (const { id, el } of this.poolCards) el.classList.toggle('chosen', chosen.has(id));
+    for (const { id, el } of this.poolCards) {
+      el.hidden = chosen.has(id);
+    }
   }
 
   // ------------------------------------------------------------------- drag
