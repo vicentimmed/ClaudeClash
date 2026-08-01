@@ -17,6 +17,7 @@ export type UnitShape =
   | 'babydragon'
   | 'minion'
   | 'cannon'
+  | 'tesla'
   | 'fireball'
   | 'arrows'
   | 'zap';
@@ -72,6 +73,8 @@ export interface CardDef {
   spawnCount?: number;
   /** spawner troops: seconds between waves after the first */
   spawnIntervalSec?: number;
+  /** buildings that retract underground when idle (Tesla) */
+  hidesUnderground?: boolean;
   visual: Visual;
 }
 
@@ -162,6 +165,8 @@ export interface Entity {
   swing: number;
   /** spawner troops: countdown until the next summon wave */
   spawnCd?: number;
+  /** Tesla: retracted underground — immune to most damage, can't attack */
+  hidden?: boolean;
 
   towerKind?: TowerKind;
   side?: Side;
@@ -219,7 +224,8 @@ export type Effect =
   | { type: 'death'; x: number; y: number; color: string; scale: number }
   | { type: 'deploy'; x: number; y: number }
   | { type: 'towerDown'; x: number; y: number }
-  | { type: 'spell'; x: number; y: number; radius: number; shape: UnitShape };
+  | { type: 'spell'; x: number; y: number; radius: number; shape: UnitShape }
+  | { type: 'teslaZap'; x0: number; y0: number; x1: number; y1: number };
 
 export type MatchPhase = 'normal' | 'overtime' | 'over';
 export type MatchResult = 'win' | 'lose' | 'draw';

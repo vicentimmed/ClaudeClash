@@ -2,7 +2,7 @@ import { Application, Container, Graphics, Text } from 'pixi.js';
 import { ARENA } from '../sim/arena';
 import type { Entity, Team, UnitShape } from '../sim/types';
 import type { World } from '../sim/world';
-import { TEAM_COLOR, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
+import { TEAM_COLOR, drawLightningBolt, drawTeslaTrapdoor, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
 
 const GRASS = 0x6aa834;
 const GRASS_ALT = 0x74b23a;
@@ -38,8 +38,11 @@ interface BarGeom {
 class EntityView {
   root = new Container();
   shadow = new Graphics();
+  /** Tesla only: hatch drawn on the ground while retracted */
+  trapdoor = new Graphics();
   bob = new Container();
   body = new Graphics();
+  zapLine = new Graphics();
   spawnRing = new Graphics();
   hpBg = new Graphics();
   hpFg = new Graphics();
@@ -50,10 +53,11 @@ class EntityView {
   built = false;
   lastHpRatio = -1;
   lastHpValue = -1;
+  lastHidden = false;
   dying = 0;
 
   constructor() {
-    this.root.addChild(this.shadow, this.spawnRing, this.bob, this.hpBg, this.hpFg);
+    this.root.addChild(this.shadow, this.trapdoor, this.spawnRing, this.bob, this.zapLine, this.hpBg, this.hpFg);
     this.bob.addChild(this.body);
   }
 }
@@ -66,6 +70,7 @@ export class Renderer {
   private root = new Container();
   private arenaG = new Graphics();
   private zoneG = new Graphics();
+  private previewG = new Graphics();
   private entityLayer = new Container();
   private spellLayer = new Container();
   private projLayer = new Container();
@@ -83,6 +88,8 @@ export class Renderer {
   private host!: HTMLElement;
   /** 'half' = own side (troops), 'all' = whole board (spells) */
   zoneMode: 'none' | 'half' | 'all' = 'none';
+  /** Placement preview — attack/splash radius circle at cursor (buildings & spells) */
+  deployPreview: { x: number; y: number; range: number; color: number } | null = null;
 
   async init(host: HTMLElement) {
     this.host = host;
@@ -98,6 +105,7 @@ export class Renderer {
     this.root.addChild(
       this.arenaG,
       this.zoneG,
+      this.previewG,
       this.entityLayer,
       this.spellLayer,
       this.projLayer,
@@ -124,6 +132,8 @@ export class Renderer {
     for (const view of this.views.values()) {
       view.body.clear();
       view.shadow.clear();
+      view.trapdoor.clear();
+      view.zapLine.clear();
       view.built = false;
     }
   }
@@ -219,6 +229,21 @@ export class Renderer {
     g.rect(0, ty(top), W, 2).fill({ color: 0xffffff, alpha: 0.45 });
   }
 
+  private drawDeployPreview() {
+    const g = this.previewG;
+    g.clear();
+    if (!this.deployPreview) return;
+
+    const { x, y, range, color } = this.deployPreview;
+    const [sx, sy] = this.toScreen(x, y);
+    const rx = range * this.tile;
+    const ry = range * this.tile * this.squash;
+
+    g.ellipse(sx, sy, rx, ry).fill({ color, alpha: 0.07 });
+    g.ellipse(sx, sy, rx, ry).stroke({ width: 2.5, color, alpha: 0.55 });
+    g.ellipse(sx, sy, rx * 0.985, ry * 0.985).stroke({ width: 1, color: 0xffffff, alpha: 0.35 });
+  }
+
   // ------------------------------------------------------------------ views
 
   private buildView(view: EntityView, e: Entity, world: World) {
@@ -264,12 +289,19 @@ export class Renderer {
         .ellipse(0, 0, e.radius * T * 1.15, e.radius * T * 0.6)
         .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: 0.85 });
       drawUnit(view.body, card.visual.shape, h, card.visual.body, card.visual.accent, e.team);
+      view.lastHidden = e.cardId === 'tesla' && !!e.hidden;
+      if (e.cardId === 'tesla') {
+        this.syncTeslaTrapdoor(view, e, world, h);
+      }
       // flyers and the Witch hover above their shadow
       view.flyLift = e.flying || card.visual.shape === 'witch' ? h * 0.55 : 0;
 
       const barW = Math.max(14, e.radius * T * 2.1);
       const bh = Math.max(4, T * 0.2);
-      const by = -h - bh - T * 0.18 - view.flyLift;
+      const by =
+        e.cardId === 'tesla' && e.hidden
+          ? -bh - T * 0.22
+          : -h - bh - T * 0.18 - view.flyLift;
       view.hpBg.clear();
       view.hpFg.clear();
       view.hpBg.roundRect(-barW / 2, by, barW, bh, 2).fill(0x241c14);
@@ -278,6 +310,21 @@ export class Renderer {
     view.built = true;
     view.lastHpRatio = -1;
     view.lastHpValue = -1;
+  }
+
+  private syncTeslaTrapdoor(view: EntityView, e: Entity, world: World, h: number) {
+    const card = world.b.cards.tesla;
+    view.trapdoor.clear();
+    if (e.hidden) {
+      drawTeslaTrapdoor(view.trapdoor, h, card.visual.accent, e.team);
+      view.trapdoor.visible = true;
+      view.bob.visible = false;
+      view.shadow.visible = false;
+    } else {
+      view.trapdoor.visible = false;
+      view.bob.visible = true;
+      view.shadow.visible = true;
+    }
   }
 
   private syncViews(world: World) {
@@ -303,6 +350,7 @@ export class Renderer {
   draw(world: World, alpha: number, dt: number) {
     this.syncViews(world);
     this.drawZone(world);
+    this.drawDeployPreview();
 
     const T = this.tile;
     const byId = new Map(world.entities.map((e) => [e.id, e]));
@@ -358,6 +406,41 @@ export class Renderer {
 
       // animation
       const bob = view.bob;
+      const card = world.b.cards[e.cardId];
+      if (e.cardId === 'tesla' && !!e.hidden !== view.lastHidden) {
+        const th = card.visual.scale * T;
+        if (!e.hidden) {
+          view.body.clear();
+          drawUnit(view.body, 'tesla', th, card.visual.body, card.visual.accent, e.team);
+        }
+        this.syncTeslaTrapdoor(view, e, world, th);
+        view.lastHidden = !!e.hidden;
+        // reposition HP bar above trapdoor or tower
+        if (view.hpFgGeom) {
+          const bh = Math.max(4, T * 0.2);
+          const barW = Math.max(14, e.radius * T * 2.1);
+          const by = e.hidden ? -bh - T * 0.22 : -th - bh - T * 0.18;
+          view.hpBg.clear();
+          view.hpFg.clear();
+          view.hpBg.roundRect(-barW / 2, by, barW, bh, 2).fill(0x241c14);
+          view.hpFgGeom = { x: -barW / 2 + 1, y: by + 1, w: barW - 2, h: bh - 2 };
+          view.lastHpRatio = -1;
+        }
+      }
+      if (e.cardId === 'tesla') {
+        view.zapLine.clear();
+        if (!e.hidden && e.state === 'attacking' && e.targetId) {
+          const target = byId.get(e.targetId);
+          if (target) {
+            const tx = target.px + (target.x - target.px) * alpha;
+            const ty = target.py + (target.y - target.py) * alpha;
+            const [tsx, tsy] = this.toScreen(tx, ty - 0.3);
+            const th = card.visual.scale * T;
+            const coilY = bob.position.y - th * 0.88;
+            drawLightningBolt(view.zapLine, 0, coilY, tsx - sx, tsy - sy, T, e.animT * 7 + e.swing * 3);
+          }
+        }
+      }
       if (e.kind === 'tower') {
         bob.position.y = Math.max(0, e.swing) ** 2 * T * 0.1;
       } else {
@@ -374,7 +457,7 @@ export class Renderer {
         } else {
           view.root.alpha = 1;
           view.spawnRing.clear();
-          if (e.flying || world.b.cards[e.cardId].visual.shape === 'witch') {
+          if (e.flying || card?.visual.shape === 'witch') {
             bobY -= Math.sin(e.animT * 3.4) * T * 0.09;
             bob.rotation = Math.sin(e.animT * 3.4) * 0.04;
           } else if (e.state === 'moving' && e.speed > 0) {
@@ -394,7 +477,13 @@ export class Renderer {
       }
 
       view.body.tint =
-        e.hitFlash > 0 ? 0xff9c9c : e.stunLeft > 0 ? 0x9fd8ff : 0xffffff;
+        e.hitFlash > 0
+          ? 0xff9c9c
+          : e.stunLeft > 0
+            ? 0x9fd8ff
+            : e.cardId === 'tesla' && e.state === 'attacking' && e.swing > 0.1
+              ? 0xc8f8ff
+              : 0xffffff;
     }
 
     this.drawPendingSpells(world, alpha);
@@ -491,7 +580,16 @@ export class Renderer {
       const [sx, sy] = this.toScreen(fx.x, fx.y);
       switch (fx.type) {
         case 'hit':
-          this.burst(sx, sy, hexToNum(fx.color), 5, this.tile * 0.11, 0.28);
+          if (fx.color === '#8ff0ff') {
+            this.burst(sx, sy, 0x8ff0ff, 8, this.tile * 0.1, 0.32);
+            const zap = new Graphics();
+            zap.poly([0, -this.tile * 0.35, this.tile * 0.12, -this.tile * 0.12, this.tile * 0.04, -this.tile * 0.12, this.tile * 0.16, this.tile * 0.22, -this.tile * 0.04, this.tile * 0.04, -this.tile * 0.12, 0, -this.tile * 0.12]).fill(0xfffbe0);
+            zap.position.set(sx, sy);
+            this.fxLayer.addChild(zap);
+            this.particles.push({ g: zap, vx: 0, vy: 0, life: 0.18, max: 0.18, grow: 0, spin: 0 });
+          } else {
+            this.burst(sx, sy, hexToNum(fx.color), 5, this.tile * 0.11, 0.28);
+          }
           break;
         case 'splash': {
           const ring = new Graphics();
@@ -523,6 +621,16 @@ export class Renderer {
         case 'spell':
           this.spellBlast(sx, sy, fx.radius, fx.shape);
           break;
+        case 'teslaZap': {
+          const [sx0, sy0] = this.toScreen(fx.x0, fx.y0);
+          const [sx1, sy1] = this.toScreen(fx.x1, fx.y1);
+          const bolt = new Graphics();
+          drawLightningBolt(bolt, sx0, sy0, sx1, sy1, this.tile, Math.random() * 10);
+          this.fxLayer.addChild(bolt);
+          this.particles.push({ g: bolt, vx: 0, vy: 0, life: 0.12, max: 0.12, grow: 0, spin: 0 });
+          this.burst(sx1, sy1, 0x8ff0ff, 6, this.tile * 0.09, 0.22);
+          break;
+        }
       }
     }
     world.effects.length = 0;
@@ -609,6 +717,8 @@ export class Renderer {
     for (const p of this.particles) p.g.destroy();
     this.particles = [];
     this.shake = 0;
+    this.deployPreview = null;
+    this.previewG.clear();
   }
 
   teamColor(team: Team): number {

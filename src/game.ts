@@ -5,7 +5,7 @@ import { loadDevSettings, saveDevSettings, type SpeedMultiplier } from './dev/se
 import { Renderer } from './render/renderer';
 import { drawUnit } from './render/shapes';
 import { Bot } from './sim/bot';
-import type { Balance, Effect } from './sim/types';
+import type { Balance, CardDef, Effect } from './sim/types';
 import { Hand, World } from './sim/world';
 import { AdminPanel } from './ui/admin';
 import { DeckBuilder } from './ui/deck';
@@ -77,6 +77,10 @@ export class Game {
     this.deckBuilder.setSoundOn(this.audio.enabled);
 
     this.stage.addEventListener('pointerdown', (ev) => this.onStagePointer(ev));
+    this.stage.addEventListener('pointermove', (ev) => this.updateDeployPreview(ev.clientX, ev.clientY));
+    document.addEventListener('pointermove', (ev) => {
+      if (this.ui.selected !== null && this.running) this.updateDeployPreview(ev.clientX, ev.clientY);
+    });
 
     const relayout = () => this.renderer.layout();
     window.addEventListener('resize', relayout);
@@ -190,6 +194,7 @@ export class Game {
   private onSelectCard(index: number | null) {
     if (index === null) {
       this.renderer.zoneMode = 'none';
+      this.renderer.deployPreview = null;
       this.hint.style.display = 'none';
       return;
     }
@@ -200,9 +205,64 @@ export class Game {
       card.cost > this.world.elixir[0]
         ? `Elixir insuficiente (${card.cost})`
         : card.kind === 'spell'
-          ? 'Toque em qualquer lugar do campo'
-          : 'Toque na área iluminada';
+          ? 'Toque em qualquer lugar — círculo = área de efeito'
+          : this.deployPreviewRadius(card)
+            ? 'Toque na área iluminada — círculo = alcance'
+            : 'Toque na área iluminada';
     this.hint.style.display = 'block';
+    this.renderer.deployPreview = null;
+  }
+
+  /** Radius shown while aiming — buildings use attack range, spells use splash. */
+  private deployPreviewRadius(card: CardDef): number | null {
+    if (card.kind === 'building' && card.range > 0) return card.range;
+    if (card.kind === 'spell' && card.splashRadius > 0) return card.splashRadius;
+    return null;
+  }
+
+  private deployPreviewColor(cardId: string, card: CardDef): number {
+    if (card.kind === 'spell') {
+      const spellColors: Record<string, number> = {
+        fireball: 0xffa63d,
+        arrows: 0xd4c4a0,
+        zap: 0x8ff0ff,
+      };
+      return spellColors[cardId] ?? 0xffffff;
+    }
+    return cardId === 'tesla' ? 0x8ff0ff : 0xc9d2da;
+  }
+
+  /** Range/splash circle at the pointer while a building or spell is selected. */
+  private updateDeployPreview(clientX: number, clientY: number) {
+    const index = this.ui.selected;
+    if (index === null || !this.running || this.world.phase === 'over') {
+      this.renderer.deployPreview = null;
+      return;
+    }
+    const cardId = this.hand.hand[index];
+    const card = this.balance.cards[cardId];
+    const range = this.deployPreviewRadius(card);
+    if (!range) {
+      this.renderer.deployPreview = null;
+      return;
+    }
+    const rect = this.stage.getBoundingClientRect();
+    const inside =
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom;
+    if (!inside) {
+      this.renderer.deployPreview = null;
+      return;
+    }
+    const [x, y] = this.renderer.fromScreen(clientX - rect.left, clientY - rect.top);
+    this.renderer.deployPreview = {
+      x,
+      y,
+      range,
+      color: this.deployPreviewColor(cardId, card),
+    };
   }
 
   /** Tap-tap flow: select a card, then tap the arena. Illegal tap keeps the
@@ -217,6 +277,7 @@ export class Game {
     this.hand.play(index);
     this.ui.clearSelection();
     this.renderer.zoneMode = 'none';
+    this.renderer.deployPreview = null;
     this.hint.style.display = 'none';
   }
 
@@ -239,6 +300,7 @@ export class Game {
     }
     this.ui.clearSelection();
     this.renderer.zoneMode = 'none';
+    this.renderer.deployPreview = null;
     this.hint.style.display = 'none';
   }
 

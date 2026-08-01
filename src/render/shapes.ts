@@ -331,6 +331,58 @@ export function drawUnit(
       break;
     }
 
+    case 'tesla': {
+      const w = h * 0.58;
+      const wood = hexToNum(accentHex);
+      const metal = body;
+      const teamColor = team !== undefined ? TEAM_COLOR[team] : 0x3b7dd8;
+      const coil = 0x5ce1ff;
+
+      // wooden base platform
+      g.roundRect(-w * 0.5, -h * 0.12, w, h * 0.12, h * 0.03).fill(wood);
+      g.rect(-w * 0.5, -h * 0.12, w, h * 0.03).fill(shade(wood, 0.12));
+
+      // lattice pillars with team-colored supports
+      g.rect(-w * 0.38, -h * 0.72, w * 0.1, h * 0.62).fill(wood);
+      g.rect(w * 0.28, -h * 0.72, w * 0.1, h * 0.62).fill(wood);
+      g.rect(-w * 0.42, -h * 0.58, w * 0.06, h * 0.14).fill(teamColor);
+      g.rect(w * 0.36, -h * 0.58, w * 0.06, h * 0.14).fill(teamColor);
+      g.rect(-w * 0.42, -h * 0.32, w * 0.06, h * 0.14).fill(teamColor);
+      g.rect(w * 0.36, -h * 0.32, w * 0.06, h * 0.14).fill(teamColor);
+
+      // cross braces on lattice
+      g.moveTo(-w * 0.33, -h * 0.68)
+        .lineTo(w * 0.33, -h * 0.2)
+        .stroke({ width: h * 0.025, color: shade(wood, -0.2) });
+      g.moveTo(w * 0.33, -h * 0.68)
+        .lineTo(-w * 0.33, -h * 0.2)
+        .stroke({ width: h * 0.025, color: shade(wood, -0.2) });
+
+      // coiled wire on pillar
+      for (let i = 0; i < 4; i++) {
+        const wy = -h * (0.22 + i * 0.1);
+        g.ellipse(-w * 0.33, wy, h * 0.045, h * 0.022).stroke({ width: h * 0.014, color: metal });
+      }
+
+      // metal coil housing
+      g.roundRect(-w * 0.22, -h * 0.82, w * 0.44, h * 0.22, h * 0.05).fill(metal);
+      g.circle(0, -h * 0.88, h * 0.11).fill(shade(metal, 0.15));
+      g.poly([-h * 0.06, -h * 0.88, h * 0.06, -h * 0.88, 0, -h * 1.02]).fill(coil);
+      g.circle(0, -h * 0.88, h * 0.045).fill({ color: coil, alpha: 0.65 });
+
+      // lightning bolt emblem on coil
+      g.poly([
+        -h * 0.018, -h * 0.92,
+        h * 0.018, -h * 0.92,
+        h * 0.006, -h * 0.86,
+        h * 0.024, -h * 0.86,
+        -h * 0.006, -h * 0.8,
+        -h * 0.018, -h * 0.86,
+        0, -h * 0.86,
+      ]).fill(0xfffbe0);
+      break;
+    }
+
     case 'fireball': {
       g.circle(0, -h * 0.5, h * 0.34).fill(body);
       g.circle(-h * 0.05, -h * 0.55, h * 0.21).fill(accent);
@@ -390,6 +442,61 @@ export function drawUnit(
       break;
     }
   }
+}
+
+/** Ground hatch left behind when the Tesla retracts underground. */
+export function drawTeslaTrapdoor(g: Graphics, h: number, accentHex: string, team?: number) {
+  const w = h * 0.58;
+  const wood = hexToNum(accentHex);
+  const teamColor = team !== undefined ? TEAM_COLOR[team] : 0x3b7dd8;
+
+  g.ellipse(0, 0, w * 0.54, w * 0.54 * 0.34).fill({ color: 0x000000, alpha: 0.24 });
+  g.roundRect(-w * 0.46, -h * 0.095, w * 0.92, h * 0.095, h * 0.018).stroke({
+    width: h * 0.014,
+    color: 0x5a6068,
+  });
+  g.roundRect(-w * 0.44, -h * 0.085, w * 0.88, h * 0.085, h * 0.015).fill(wood);
+  g.rect(-w * 0.44, -h * 0.085, w * 0.88, h * 0.022).fill(shade(wood, 0.1));
+  for (let i = -1; i <= 1; i++) {
+    g.moveTo(-w * 0.44, -h * 0.045 + i * h * 0.022)
+      .lineTo(w * 0.44, -h * 0.045 + i * h * 0.022)
+      .stroke({ width: 1.2, color: shade(wood, -0.28), alpha: 0.65 });
+  }
+  g.rect(-w * 0.13, -h * 0.062, w * 0.09, h * 0.038).fill(teamColor);
+  g.rect(w * 0.04, -h * 0.062, w * 0.09, h * 0.038).fill(teamColor);
+  g.circle(-w * 0.085, -h * 0.043, h * 0.011).fill(shade(teamColor, -0.3));
+  g.circle(w * 0.085, -h * 0.043, h * 0.011).fill(shade(teamColor, -0.3));
+  g.circle(0, -h * 0.043, h * 0.016).fill(0x5a6068);
+  g.circle(0, -h * 0.043, h * 0.007).fill(shade(0x5a6068, 0.35));
+}
+
+/** Jagged lightning segment between two points (local/screen coordinates). */
+export function drawLightningBolt(
+  g: Graphics,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  w: number,
+  seed = 0,
+) {
+  g.clear();
+  const segs = 8;
+  const pts: number[] = [x0, y0];
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = -dy / len;
+  const py = dx / len;
+  for (let i = 1; i < segs; i++) {
+    const t = i / segs;
+    const jag = Math.sin(seed * 12.9898 + i * 4.141) * w * 0.38;
+    pts.push(x0 + dx * t + px * jag, y0 + dy * t + py * jag);
+  }
+  pts.push(x1, y1);
+  g.poly(pts).stroke({ width: w * 0.16, color: 0x8ff0ff, alpha: 0.32 });
+  g.poly(pts).stroke({ width: w * 0.07, color: 0xc8f8ff });
+  g.poly(pts).stroke({ width: w * 0.028, color: 0xffffff });
 }
 
 /**

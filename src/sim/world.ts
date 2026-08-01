@@ -289,6 +289,7 @@ export class World {
       hitFlash: 0,
       swing: 0,
       spawnCd: card.spawnIntervalSec ? 0 : undefined,
+      hidden: card.hidesUnderground ? false : undefined,
       active: true,
       rubble: false,
     });
@@ -311,6 +312,41 @@ export class World {
     }
     this.effects.push({ type: 'deploy', x: e.x, y: e.y });
     e.spawnCd = card.spawnIntervalSec;
+  }
+
+  /** Tesla: retract underground when idle, rise when an enemy enters range. */
+  private stepHiddenBuilding(e: Entity) {
+    if (e.deployLeft > 0 || !this.b.cards[e.cardId]?.hidesUnderground) return;
+
+    const inRange = this.nearestEnemyInRange(e, e.range);
+    const wasHidden = e.hidden;
+
+    if (inRange) {
+      e.hidden = false;
+      if (wasHidden) {
+        e.attackCd = this.b.cards[e.cardId].firstAttackDelay ?? 0.5;
+      }
+    } else {
+      e.hidden = true;
+      e.targetId = null;
+      e.state = 'moving';
+    }
+  }
+
+  private nearestEnemyInRange(e: Entity, range: number): Entity | undefined {
+    const enemy: Team = e.team === 0 ? 1 : 0;
+    let best: Entity | undefined;
+    let bestD = Infinity;
+    for (const o of this.entities) {
+      if (o.team !== enemy || o.hp <= 0 || o.kind === 'tower') continue;
+      if (o.flying && e.targets === 'ground') continue;
+      const d = dist(e.x, e.y, o.x, o.y) - o.radius;
+      if (d <= range && d < bestD) {
+        bestD = d;
+        best = o;
+      }
+    }
+    return best;
   }
 
   // ------------------------------------------------------------------ tick
@@ -352,10 +388,12 @@ export class World {
       if (e.stunLeft > 0) {
         e.stunLeft -= dt;
         this.stepSpawner(e, dt);
+        this.stepHiddenBuilding(e);
         continue;
       }
       if (e.attackCd > 0) e.attackCd -= dt;
       this.stepSpawner(e, dt);
+      this.stepHiddenBuilding(e);
       this.stepEntity(e, dt);
     }
 
@@ -429,6 +467,8 @@ export class World {
   }
 
   private stepEntity(e: Entity, dt: number) {
+    if (e.hidden && e.cardId === 'tesla') return;
+
     const target = this.acquireTarget(e);
     e.targetId = target ? target.id : null;
 
@@ -499,12 +539,17 @@ export class World {
   private acquireTarget(e: Entity): Entity | undefined {
     const enemy: Team = e.team === 0 ? 1 : 0;
 
+    if (this.b.cards[e.cardId]?.hidesUnderground) {
+      return this.nearestEnemyInRange(e, e.range);
+    }
+
     if (e.targets !== 'buildings') {
       let best: Entity | undefined;
       let bestD = e.kind === 'tower' ? e.range + e.radius : e.sightRange;
       for (const o of this.entities) {
         if (o.team !== enemy || o.hp <= 0 || o.kind === 'tower') continue;
         if (o.flying && e.targets === 'ground') continue;
+        if (o.hidden && o.cardId === 'tesla') continue;
         const d = dist(e.x, e.y, o.x, o.y) - o.radius;
         if (d < bestD) {
           bestD = d;
@@ -556,12 +601,29 @@ export class World {
       });
       return;
     }
+    // instant ranged zap (Tesla)
+    if (e.projectileSpeed <= 0 && e.range > 1.2 && e.kind === 'building') {
+      this.damage(target, e.damage, { attacker: e });
+      if (e.cardId === 'tesla') {
+        this.effects.push({
+          type: 'teslaZap',
+          x0: e.x,
+          y0: e.y - 0.55,
+          x1: target.x,
+          y1: target.y - 0.3,
+        });
+        this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#8ff0ff' });
+      } else {
+        this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#fff2c4' });
+      }
+      return;
+    }
     // melee: splash is centred on the attacker so it reads as a 360° swing
     if (e.splashRadius > 0) {
-      this.splashDamage(e.team, e.x, e.y, e.splashRadius, e.damage);
+      this.splashDamage(e.team, e.x, e.y, e.splashRadius, e.damage, 1, e);
       this.effects.push({ type: 'splash', x: e.x, y: e.y, radius: e.splashRadius });
     } else {
-      this.damage(target, e.damage);
+      this.damage(target, e.damage, { attacker: e });
       this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: '#fff2c4' });
     }
   }
@@ -587,7 +649,7 @@ export class World {
             radius: p.splashRadius,
           });
         } else {
-          this.damage(target, p.damage);
+          this.damage(target, p.damage, { attackerTeam: p.team });
           this.effects.push({ type: 'hit', x: target.x, y: target.y - 0.3, color: p.color });
         }
         p.speed = -1;
@@ -606,20 +668,37 @@ export class World {
     radius: number,
     amount: number,
     towerFactor = 1,
+    attacker?: Entity,
   ) {
     const enemy: Team = team === 0 ? 1 : 0;
     for (const o of this.entities) {
       if (o.team !== enemy || o.hp <= 0) continue;
       if (dist(x, y, o.x, o.y) - o.radius > radius) continue;
-      this.damage(o, o.kind === 'tower' ? amount * towerFactor : amount);
+      this.damage(o, o.kind === 'tower' ? amount * towerFactor : amount, { spell: !attacker, attacker });
     }
   }
 
-  private damage(target: Entity, amount: number) {
+  private damage(
+    target: Entity,
+    amount: number,
+    opts?: { spell?: boolean; attacker?: Entity; attackerTeam?: Team },
+  ) {
     if (target.hp <= 0) return;
+    if (this.isDamageBlocked(target, opts)) return;
     target.hp -= amount;
     target.hitFlash = 0.16;
     if (target.towerKind === 'king') target.active = true;
+  }
+
+  /** Hidden Tesla ignores most damage while underground. */
+  private isDamageBlocked(
+    target: Entity,
+    opts?: { spell?: boolean; attacker?: Entity; attackerTeam?: Team },
+  ): boolean {
+    if (!target.hidden || target.cardId !== 'tesla' || target.deployLeft > 0) return false;
+    if (opts?.spell) return true;
+    if (opts?.attacker?.targets === 'buildings') return false;
+    return true;
   }
 
   /** Push overlapping ground units apart so they don't pile into one pixel. */
