@@ -15,6 +15,14 @@ import type {
 const dist = (ax: number, ay: number, bx: number, by: number) =>
   Math.hypot(ax - bx, ay - by);
 
+/** Offsets for spawner summons — plus shape around the caster (Witch). */
+const SPAWN_PLUS: Array<[number, number]> = [
+  [0, -0.55],
+  [-0.55, 0],
+  [0.55, 0],
+  [0, 0.55],
+];
+
 /** Spawn offsets (in tiles) for multi-unit cards, so they don't stack. */
 const FORMATIONS: Record<number, Array<[number, number]>> = {
   1: [[0, 0]],
@@ -237,7 +245,14 @@ export class World {
     this.pendingSpells = this.pendingSpells.filter((s) => s.t < s.duration);
   }
 
-  private spawnTroop(team: Team, cardId: string, card: CardDef, x: number, y: number) {
+  private spawnTroop(
+    team: Team,
+    cardId: string,
+    card: CardDef,
+    x: number,
+    y: number,
+    instant = false,
+  ) {
     const cx = Math.min(Math.max(x, 0.4), ARENA.width - 0.4);
     const cy = Math.min(Math.max(y, 0.4), ARENA.height - 0.4);
     this.entities.push({
@@ -264,18 +279,38 @@ export class World {
       jumpsRiver: card.jumpsRiver,
       lifetimeLeft: card.lifetimeSec,
       decayPerSec: card.lifetimeSec > 0 ? card.hp / card.lifetimeSec : 0,
-      attackCd: 0,
-      deployLeft: card.deployTime,
+      attackCd: card.firstAttackDelay ?? 0,
+      deployLeft: instant ? 0 : card.deployTime,
       stunLeft: 0,
       targetId: null,
-      state: 'deploying',
+      state: instant ? 'moving' : 'deploying',
       facing: team === 0 ? -1 : 1,
       animT: Math.random() * 2,
       hitFlash: 0,
       swing: 0,
+      spawnCd: card.spawnIntervalSec ? 0 : undefined,
       active: true,
       rubble: false,
     });
+  }
+
+  /** Periodic summons (Witch skeletons) — stops when the spawner dies. */
+  private stepSpawner(e: Entity, dt: number) {
+    if (e.deployLeft > 0 || e.spawnCd === undefined) return;
+    const card = this.b.cards[e.cardId];
+    if (!card?.spawnIntervalSec || !card.spawnCardId || !card.spawnCount) return;
+    const summon = this.b.cards[card.spawnCardId];
+    if (!summon) return;
+
+    e.spawnCd -= dt;
+    if (e.spawnCd > 0) return;
+
+    for (let i = 0; i < card.spawnCount; i++) {
+      const [ox, oy] = SPAWN_PLUS[i % SPAWN_PLUS.length];
+      this.spawnTroop(e.team, card.spawnCardId, summon, e.x + ox, e.y + oy, true);
+    }
+    this.effects.push({ type: 'deploy', x: e.x, y: e.y });
+    e.spawnCd = card.spawnIntervalSec;
   }
 
   // ------------------------------------------------------------------ tick
@@ -316,9 +351,11 @@ export class World {
       }
       if (e.stunLeft > 0) {
         e.stunLeft -= dt;
+        this.stepSpawner(e, dt);
         continue;
       }
       if (e.attackCd > 0) e.attackCd -= dt;
+      this.stepSpawner(e, dt);
       this.stepEntity(e, dt);
     }
 
@@ -509,7 +546,12 @@ export class World {
         speed: e.projectileSpeed,
         damage: e.damage,
         splashRadius: e.splashRadius,
-        color: e.kind === 'tower' ? '#e8e2d0' : this.b.cards[e.cardId].visual.accent,
+        color:
+          e.kind === 'tower'
+            ? '#e8e2d0'
+            : e.cardId === 'witch'
+              ? '#ff4da6'
+              : this.b.cards[e.cardId].visual.accent,
         size: e.splashRadius > 0 ? 0.3 : 0.18,
       });
       return;

@@ -7,6 +7,7 @@ export type UnitShape =
   | 'goblin'
   | 'skeleton'
   | 'wizard'
+  | 'witch'
   | 'valkyrie'
   | 'knight'
   | 'archer'
@@ -63,6 +64,14 @@ export interface CardDef {
   stunSec: number;
   /** spells only: fraction of the damage that reaches towers */
   towerDamageFactor: number;
+  /** seconds after deploy before the first attack (Witch: 0.7) */
+  firstAttackDelay?: number;
+  /** spawner troops: card to summon periodically */
+  spawnCardId?: string;
+  /** spawner troops: how many units per wave */
+  spawnCount?: number;
+  /** spawner troops: seconds between waves after the first */
+  spawnIntervalSec?: number;
   visual: Visual;
 }
 
@@ -151,6 +160,8 @@ export interface Entity {
   hitFlash: number;
   /** 0..1 progress of the current swing, for the lunge animation */
   swing: number;
+  /** spawner troops: countdown until the next summon wave */
+  spawnCd?: number;
 
   towerKind?: TowerKind;
   side?: Side;

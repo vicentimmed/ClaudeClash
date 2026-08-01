@@ -38,7 +38,14 @@ const DARK_EYE = 0x241c14;
  * Every unit is drawn procedurally with its feet at (0, 0) and its body
  * extending upward into negative y. `h` is the full height in pixels.
  */
-export function drawUnit(g: Graphics, shape: UnitShape, h: number, bodyHex: string, accentHex: string) {
+export function drawUnit(
+  g: Graphics,
+  shape: UnitShape,
+  h: number,
+  bodyHex: string,
+  accentHex: string,
+  team?: number,
+) {
   const body = hexToNum(bodyHex);
   const accent = hexToNum(accentHex);
   const dark = shade(body, -0.35);
@@ -107,6 +114,89 @@ export function drawUnit(g: Graphics, shape: UnitShape, h: number, bodyHex: stri
       g.rect(w * 0.6, -h * 0.78, h * 0.048, h * 0.78).fill(WOOD);
       g.circle(w * 0.62, -h * 0.82, h * 0.115).fill(accent);
       g.circle(w * 0.62, -h * 0.82, h * 0.055).fill(shade(accent, 0.5));
+      break;
+    }
+
+    case 'witch': {
+      const w = h * 0.5;
+      const gold = hexToNum(accentHex);
+      const cloak = body;
+      const dress = team !== undefined ? TEAM_COLOR[team] : shade(cloak, 0.25);
+      const darkTop = 0x3a3442;
+      const pinkEye = 0xff4da6;
+      const purpleLip = 0x6b2d6b;
+
+      // floating tattered cloak hem (no legs)
+      g.poly([-w * 0.58, 0, w * 0.58, 0, w * 0.42, -h * 0.28, -w * 0.42, -h * 0.28]).fill(
+        shade(cloak, -0.12),
+      );
+      g.poly([-w * 0.48, -h * 0.05, w * 0.48, -h * 0.05, w * 0.32, -h * 0.38, -w * 0.32, -h * 0.38]).fill(
+        shade(cloak, -0.22),
+      );
+
+      // team-colored dress
+      g.poly([-w * 0.4, -h * 0.12, w * 0.4, -h * 0.12, w * 0.26, -h * 0.5, -w * 0.26, -h * 0.5]).fill(
+        dress,
+      );
+      g.rect(-w * 0.28, -h * 0.18, w * 0.56, h * 0.05).fill(shade(dress, -0.2));
+
+      // dark gray corset
+      g.roundRect(-w * 0.2, -h * 0.46, w * 0.4, h * 0.2, h * 0.04).fill(darkTop);
+
+      // golden belt with skull buckle
+      g.rect(-w * 0.36, -h * 0.18, w * 0.72, h * 0.055).fill(gold);
+      g.circle(0, -h * 0.155, h * 0.042).fill(BONE);
+      g.circle(-h * 0.022, -h * 0.152, h * 0.01).fill(DARK_EYE);
+      g.circle(h * 0.022, -h * 0.152, h * 0.01).fill(DARK_EYE);
+
+      // violet cloak panels
+      g.poly([-w * 0.56, -h * 0.06, -w * 0.44, -h * 0.58, -w * 0.16, -h * 0.52, -w * 0.26, -h * 0.1]).fill(
+        cloak,
+      );
+      g.poly([w * 0.56, -h * 0.06, w * 0.44, -h * 0.58, w * 0.16, -h * 0.52, w * 0.26, -h * 0.1]).fill(
+        cloak,
+      );
+      g.poly([-w * 0.18, -h * 0.52, w * 0.18, -h * 0.52, 0, -h * 0.68]).fill(shade(cloak, -0.08));
+
+      // golden skull pauldrons
+      g.circle(-w * 0.44, -h * 0.4, h * 0.078).fill(gold);
+      g.circle(-w * 0.44, -h * 0.4, h * 0.052).fill(BONE);
+      g.circle(-w * 0.455, -h * 0.408, h * 0.012).fill(DARK_EYE);
+      g.circle(-w * 0.425, -h * 0.408, h * 0.012).fill(DARK_EYE);
+      g.circle(w * 0.44, -h * 0.4, h * 0.078).fill(gold);
+      g.circle(w * 0.44, -h * 0.4, h * 0.052).fill(BONE);
+      g.circle(w * 0.425, -h * 0.408, h * 0.012).fill(DARK_EYE);
+      g.circle(w * 0.455, -h * 0.408, h * 0.012).fill(DARK_EYE);
+
+      // golden armlets
+      g.rect(-w * 0.5, -h * 0.36, w * 0.11, h * 0.045).fill(gold);
+      g.rect(w * 0.39, -h * 0.36, w * 0.11, h * 0.045).fill(gold);
+
+      // head and face
+      g.circle(0, -h * 0.6, h * 0.125).fill(SKIN);
+      g.ellipse(0, -h * 0.535, h * 0.032, h * 0.016).fill(purpleLip);
+      // glowing pink eyes
+      g.circle(-h * 0.042, -h * 0.62, h * 0.026).fill(pinkEye);
+      g.circle(h * 0.042, -h * 0.62, h * 0.026).fill(pinkEye);
+      g.circle(-h * 0.042, -h * 0.62, h * 0.01).fill(0xffffff);
+      g.circle(h * 0.042, -h * 0.62, h * 0.01).fill(0xffffff);
+
+      // witch hat — same color as the team dress
+      g.ellipse(0, -h * 0.695, h * 0.19, h * 0.045).fill(shade(dress, -0.15));
+      g.poly([-h * 0.15, -h * 0.71, h * 0.15, -h * 0.71, h * 0.04, -h * 1.08, -h * 0.04, -h * 1.08]).fill(
+        dress,
+      );
+      g.poly([-h * 0.04, -h * 0.78, h * 0.04, -h * 0.78, 0, -h * 1.08]).fill(shade(dress, -0.22));
+
+      // staff with ram skull and golden horns
+      g.rect(w * 0.46, -h * 0.68, h * 0.038, h * 0.68).fill(WOOD);
+      g.ellipse(w * 0.48, -h * 0.76, h * 0.095, h * 0.075).fill(BONE);
+      g.circle(w * 0.44, -h * 0.76, h * 0.016).fill(DARK_EYE);
+      g.circle(w * 0.52, -h * 0.76, h * 0.016).fill(DARK_EYE);
+      g.poly([w * 0.4, -h * 0.8, w * 0.36, -h * 0.94, w * 0.46, -h * 0.82]).fill(gold);
+      g.poly([w * 0.56, -h * 0.8, w * 0.6, -h * 0.94, w * 0.5, -h * 0.82]).fill(gold);
+      // pink energy orb on staff (attack glow hint)
+      g.circle(w * 0.48, -h * 0.76, h * 0.028).fill({ color: pinkEye, alpha: 0.55 });
       break;
     }
 

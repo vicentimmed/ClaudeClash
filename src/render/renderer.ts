@@ -263,9 +263,9 @@ export class Renderer {
       view.shadow
         .ellipse(0, 0, e.radius * T * 1.15, e.radius * T * 0.6)
         .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: 0.85 });
-      drawUnit(view.body, card.visual.shape, h, card.visual.body, card.visual.accent);
-      // flyers hover above their shadow
-      view.flyLift = e.flying ? h * 0.55 : 0;
+      drawUnit(view.body, card.visual.shape, h, card.visual.body, card.visual.accent, e.team);
+      // flyers and the Witch hover above their shadow
+      view.flyLift = e.flying || card.visual.shape === 'witch' ? h * 0.55 : 0;
 
       const barW = Math.max(14, e.radius * T * 2.1);
       const bh = Math.max(4, T * 0.2);
@@ -374,7 +374,7 @@ export class Renderer {
         } else {
           view.root.alpha = 1;
           view.spawnRing.clear();
-          if (e.flying) {
+          if (e.flying || world.b.cards[e.cardId].visual.shape === 'witch') {
             bobY -= Math.sin(e.animT * 3.4) * T * 0.09;
             bob.rotation = Math.sin(e.animT * 3.4) * 0.04;
           } else if (e.state === 'moving' && e.speed > 0) {

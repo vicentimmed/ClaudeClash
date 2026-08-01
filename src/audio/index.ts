@@ -6,6 +6,7 @@
  * click/touch handler before expecting anything audible.
  */
 
+import { MUSIC_V3_BACKUP } from './music-v3-backup';
 import { MUSIC_DECK } from './music-deck';
 
 const STORAGE_KEY = 'claudeclash.audio.v1';
@@ -39,83 +40,6 @@ interface Prefs {
 const A2 = 110;
 const note = (semitonesAboveA2: number) => A2 * Math.pow(2, semitonesAboveA2 / 12);
 
-/**
- * Arena Anthem (v3) — 16-bar battle theme at 136 BPM.
- * Form: verse → lift → chorus → bridge/build.
- * Backups: music-v1-backup.ts, music-v2-backup.ts.
- *
- * Semitone offsets from A2 (A=0, C=3, E=7, F=8, G=10…).
- */
-const PROGRESSION = [
-  // verse
-  { root: 0, triad: [0, 3, 7, 12] }, // Am
-  { root: -4, triad: [-4, 0, 3, 8] }, // F
-  { root: 3, triad: [3, 7, 10, 15] }, // C
-  { root: -2, triad: [-2, 2, 5, 10] }, // G
-  // lift
-  { root: 0, triad: [0, 3, 7, 12] }, // Am
-  { root: -5, triad: [-5, -2, 2, 7] }, // Em
-  { root: -4, triad: [-4, 0, 3, 8] }, // F
-  { root: -2, triad: [-2, 2, 5, 10] }, // G
-  // chorus (brighter)
-  { root: 3, triad: [3, 7, 10, 15] }, // C
-  { root: -2, triad: [-2, 2, 5, 10] }, // G
-  { root: 0, triad: [0, 3, 7, 12] }, // Am
-  { root: -4, triad: [-4, 0, 3, 8] }, // F
-  // bridge → dominant pull
-  { root: 5, triad: [5, 8, 12, 17] }, // Dm
-  { root: 0, triad: [0, 3, 7, 12] }, // Am
-  { root: -4, triad: [-4, 0, 3, 8] }, // F
-  { root: -5, triad: [-5, -1, 2, 7] }, // E (V — epic resolve into Am)
-];
-
-/**
- * Main lead — singable game-hook. `null` = rest.
- * 128 eighths = 16 bars.
- */
-const MELODY: (number | null)[] = [
-  // bars 0–1  "call" — ascending punch
-  12, null, 15, 12, 19, null, 17, 15, 15, 17, 19, 22, 20, 19, 17, 15,
-  // bars 2–3  "answer"
-  15, null, 17, 15, 22, null, 20, 19, 19, 17, 15, 14, 15, 17, 19, 15,
-  // bars 4–5  lift with leap
-  12, 15, 19, 24, null, 22, 19, 17, 17, null, 19, 17, 22, 20, 19, 17,
-  // bars 6–7  run into chorus
-  15, 17, 19, 22, 24, 22, 20, 19, 17, 15, 14, 12, 14, 15, 17, 19,
-  // bars 8–9  CHORUS hook (big & catchy)
-  27, null, 24, 22, 24, null, 22, 19, 22, 24, 27, 24, 22, 20, 19, 17,
-  // bars 10–11 chorus resolve
-  19, null, 22, 19, 24, null, 22, 20, 19, 17, 15, 17, 19, 22, 20, 19,
-  // bars 12–13 bridge sequence (rising)
-  17, 19, 20, 24, 22, 20, 19, 17, 15, 17, 19, 22, 24, 22, 20, 19,
-  // bars 14–15 build + landing
-  20, 22, 24, 27, 24, 22, 20, 19, 22, 24, 27, 31, 29, 27, 24, 22,
-];
-
-/** Harmony / counter — enters from bar 4. Often a 3rd below the lead. */
-const COUNTER: (number | null)[] = [
-  // 0–3 silent (verse sparse)
-  null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-  null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-  // 4–7 thirds under lift
-  8, 12, 15, 19, null, 17, 15, 12, 12, null, 15, 12, 17, 15, 14, 12,
-  12, 14, 15, 17, 19, 17, 15, 14, 12, 10, 8, 7, 8, 10, 12, 14,
-  // 8–11 chorus harmony
-  22, null, 19, 17, 19, null, 17, 15, 17, 19, 22, 19, 17, 15, 14, 12,
-  15, null, 17, 15, 19, null, 17, 15, 14, 12, 10, 12, 14, 17, 15, 14,
-  // 12–15 bridge echo (delay-ish, sparser)
-  null, 15, null, 19, null, 17, null, 14, null, 12, null, 17, null, 19, null, 15,
-  15, null, 19, null, 20, null, 17, null, 17, 19, 22, 24, 22, 20, 19, 17,
-];
-
-/**
- * Gallop bass offsets from chord root, per eighth in a bar.
- * Pattern: root . root 5th | root . root oct  — classic game-battle drive.
- */
-const BASS_PATTERN: (number | null)[] = [-12, null, -12, -5, -12, null, -12, 0];
-
-const BATTLE_STEPS_PER_LOOP = 128;
-
 export class GameAudio {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -129,6 +53,7 @@ export class GameAudio {
   private step = 0;
   private playingMusic = false;
   private track: MusicTrack = 'deck';
+  private pendingStart = false;
 
   constructor() {
     try {
@@ -153,6 +78,19 @@ export class GameAudio {
   async unlock() {
     if (!this.ctx) this.build();
     if (this.ctx!.state === 'suspended') await this.ctx!.resume();
+    if (this.pendingStart) {
+      this.pendingStart = false;
+      this.startMusic(this.track, { force: true });
+    }
+  }
+
+  /** Identificador da trilha de batalha (útil para confirmar no console). */
+  get battleMusicId() {
+    return 'arena-anthem-v3';
+  }
+
+  get currentTrack() {
+    return this.track;
   }
 
   private build() {
@@ -217,13 +155,15 @@ export class GameAudio {
 
   // -------------------------------------------------------------------- music
 
-  startMusic(track?: MusicTrack) {
-    if (!this.ctx) return;
-    if (track !== undefined && track !== this.track) {
-      this.stopMusic();
-      this.track = track;
+  startMusic(track?: MusicTrack, opts?: { force?: boolean }) {
+    if (track !== undefined) this.track = track;
+    if (!this.ctx) {
+      this.pendingStart = true;
+      return;
     }
-    if (this.playingMusic) return;
+    const force = opts?.force ?? false;
+    if (this.playingMusic && !force) return;
+    this.stopMusic();
     this.playingMusic = true;
     this.step = 0;
     this.nextNoteTime = this.ctx.currentTime + 0.1;
@@ -253,11 +193,11 @@ export class GameAudio {
   }
 
   private get stepDur() {
-    return this.track === 'deck' ? 60 / MUSIC_DECK.bpm / 2 : 60 / 136 / 2;
+    return this.track === 'deck' ? 60 / MUSIC_DECK.bpm / 2 : 60 / MUSIC_V3_BACKUP.bpm / 2;
   }
 
   private get stepsPerLoop() {
-    return this.track === 'deck' ? MUSIC_DECK.stepsPerLoop : BATTLE_STEPS_PER_LOOP;
+    return this.track === 'deck' ? MUSIC_DECK.stepsPerLoop : MUSIC_V3_BACKUP.stepsPerLoop;
   }
 
   /** Card Lounge — jazz lo-fi para montar o deck. */
@@ -375,16 +315,16 @@ export class GameAudio {
 
   /** v3 — Arena Anthem for in-match gameplay. */
   private scheduleBattleStep(step: number, when: number) {
-    const bar = Math.floor(step / 8) % PROGRESSION.length;
+    const bar = Math.floor(step / 8) % MUSIC_V3_BACKUP.PROGRESSION.length;
     const beat = step % 8;
-    const chord = PROGRESSION[bar];
+    const chord = MUSIC_V3_BACKUP.PROGRESSION[bar];
     const verse = bar < 4;
     const chorus = bar >= 8 && bar < 12;
     const bridge = bar >= 12;
     const build = bar >= 14;
 
     // ---- gallop bass -------------------------------------------------
-    const bassOff = BASS_PATTERN[beat];
+    const bassOff = MUSIC_V3_BACKUP.BASS_PATTERN[beat];
     if (bassOff !== null) {
       const accent = beat === 0 || beat === 4;
       this.tone({
@@ -396,7 +336,6 @@ export class GameAudio {
         bus: this.musicBus,
       });
       if (accent) {
-        // sub sine for body
         this.tone({
           freq: note(chord.root - 12),
           when,
@@ -407,7 +346,6 @@ export class GameAudio {
         });
       }
     }
-    // bridge: add walking fifths on offbeats for urgency
     if (bridge && (beat === 1 || beat === 5)) {
       this.tone({
         freq: note(chord.root - 5),
@@ -440,7 +378,6 @@ export class GameAudio {
         attack: 0.12,
         bus: this.musicBus,
       });
-      // soft third for color (minor/major from triad)
       this.tone({
         freq: note(chord.triad[1]),
         when,
@@ -451,7 +388,6 @@ export class GameAudio {
         bus: this.musicBus,
       });
     }
-    // brass stab on downs — bigger in chorus & on E dominant
     if (beat === 0 && (chorus || bar === 15 || (!verse && bar % 2 === 0))) {
       this.tone({
         freq: note(chord.root + 12),
@@ -485,8 +421,8 @@ export class GameAudio {
       });
     }
 
-    // ---- lead melody (with chorus thickness) -------------------------
-    const mel = MELODY[step % MELODY.length];
+    // ---- lead melody -------------------------------------------------
+    const mel = MUSIC_V3_BACKUP.MELODY[step % MUSIC_V3_BACKUP.MELODY.length];
     if (mel !== null) {
       const leadGain = chorus ? 0.22 : bridge ? 0.18 : 0.16;
       const leadDur = beat === 0 || beat === 4 ? 0.28 : 0.18;
@@ -498,7 +434,6 @@ export class GameAudio {
         gain: leadGain,
         bus: this.musicBus,
       });
-      // slight detune twin for "gamey" width
       this.tone({
         freq: note(mel) * 1.004,
         when,
@@ -507,7 +442,6 @@ export class GameAudio {
         gain: leadGain * 0.45,
         bus: this.musicBus,
       });
-      // octave shimmer from lift onward
       if (!verse) {
         this.tone({
           freq: note(mel + 12),
@@ -520,8 +454,7 @@ export class GameAudio {
       }
     }
 
-    // ---- counter / harmony -------------------------------------------
-    const ctr = COUNTER[step % COUNTER.length];
+    const ctr = MUSIC_V3_BACKUP.COUNTER[step % MUSIC_V3_BACKUP.COUNTER.length];
     if (ctr !== null) {
       this.tone({
         freq: note(ctr),
@@ -534,7 +467,6 @@ export class GameAudio {
     }
 
     // ---- drums -------------------------------------------------------
-    // kick on 1 & 3; extra kicks on build
     if (beat === 0 || beat === 4 || (build && (beat === 2 || beat === 6))) {
       this.noise({ when, dur: 0.11, gain: 0.26, filter: 160, bus: this.musicBus });
       this.tone({
@@ -547,7 +479,6 @@ export class GameAudio {
         bus: this.musicBus,
       });
     }
-    // snare on 2 & 4; denser in chorus/bridge
     if (beat === 4 || (chorus && beat === 6) || (bridge && (beat === 2 || beat === 6))) {
       this.noise({
         when,
@@ -558,7 +489,6 @@ export class GameAudio {
         bus: this.musicBus,
       });
     }
-    // hats — light in verse, busy later
     if (verse) {
       if (beat % 2 === 1) {
         this.noise({ when, dur: 0.025, gain: 0.04, filter: 7500, bus: this.musicBus });
@@ -572,13 +502,11 @@ export class GameAudio {
         bus: this.musicBus,
       });
     }
-    // clap-ish layer on chorus downs
     if (chorus && (beat === 0 || beat === 4)) {
       this.noise({ when, dur: 0.06, gain: 0.12, filter: 4500, sweepTo: 1500, bus: this.musicBus });
     }
 
     // ---- fills -------------------------------------------------------
-    // bar 7 → into chorus
     if (bar === 7 && beat >= 4) {
       this.noise({ when, dur: 0.045, gain: 0.1, filter: 3500, bus: this.musicBus });
       this.tone({
@@ -590,7 +518,6 @@ export class GameAudio {
         bus: this.musicBus,
       });
     }
-    // bar 15 — snare roll + rising fanfare into loop restart
     if (bar === 15) {
       this.noise({
         when,

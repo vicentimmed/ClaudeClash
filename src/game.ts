@@ -85,7 +85,7 @@ export class Game {
     // audio can only start from a real gesture
     const wake = () => {
       void this.audio.unlock().then(() => {
-        if (this.audio.musicOn) this.audio.startMusic('deck');
+        if (this.audio.musicOn && !this.running) this.audio.startMusic('deck');
       });
     };
     document.addEventListener('pointerdown', wake, { once: true });
@@ -110,7 +110,7 @@ export class Game {
     // empty slots the very first time; the deck the player last played after that
     this.deckBuilder.open(loadSavedDeck() ?? []);
     void this.audio.unlock().then(() => {
-      if (this.audio.musicOn) this.audio.startMusic('deck');
+      if (this.audio.musicOn && !this.running) this.audio.startMusic('deck');
     });
   }
 
@@ -122,7 +122,7 @@ export class Game {
     this.newMatch(deck);
     this.running = true;
     void this.audio.unlock().then(() => {
-      if (this.audio.musicOn) this.audio.startMusic('battle');
+      if (this.audio.musicOn) this.audio.startMusic('battle', { force: true });
     });
   }
 
@@ -166,7 +166,7 @@ export class Game {
       const on = this.audio.toggleAll();
       this.ui.setSoundOn(on);
       this.deckBuilder.setSoundOn(on);
-      if (on) this.audio.startMusic(this.running ? 'battle' : 'deck');
+      if (on) this.audio.startMusic(this.running ? 'battle' : 'deck', { force: true });
       else this.audio.stopMusic();
       if (on) this.audio.play('uiTap');
     });
@@ -328,7 +328,7 @@ export class Game {
     bounds.rect(0, 0, size, size).fill({ color: 0x000000, alpha: 0.001 });
     const art = new Graphics();
     const h = size * (0.52 + 0.3 * Math.min(1, card.visual.scale / 2));
-    drawUnit(art, card.visual.shape, h, card.visual.body, card.visual.accent);
+    drawUnit(art, card.visual.shape, h, card.visual.body, card.visual.accent, 0);
     art.position.set(size / 2, size * 0.94);
     holder.addChild(bounds, art);
     const canvas = this.renderer.app.renderer.extract.canvas(holder) as HTMLCanvasElement;
