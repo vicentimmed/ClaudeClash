@@ -428,6 +428,122 @@ body {
 
 /* -------------------------------------------------------------- deck builder */
 
+.result-auto {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* Online matches hide the buttons that would drop you out of a live game. */
+#topbar.online [data-role='deck'],
+#topbar.online [data-role='admin'] {
+  display: none;
+}
+
+/* -------------------------------------------------------------- home screen */
+
+#home {
+  position: absolute;
+  inset: 0;
+  background: var(--wood-dark);
+  z-index: 40;
+  display: none;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+}
+#home.show {
+  display: grid;
+}
+.home-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+  max-width: 300px;
+}
+.home-title {
+  font-size: 34px;
+  font-weight: 800;
+  margin: 0;
+  color: var(--gold);
+  letter-spacing: 0.01em;
+}
+.home-sub {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.home-btn {
+  width: 100%;
+  padding: 15px 0;
+  font-size: 17px;
+}
+.home-btn.ghost {
+  background: var(--wood-light);
+  color: var(--parchment);
+  border-bottom-color: #241c16;
+}
+.home-note {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #e0a05a;
+  min-height: 18px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.home-note.show {
+  opacity: 1;
+}
+
+/* ------------------------------------------------------- online lobby strip */
+
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  background: #1e1812;
+  border: 1px solid #33281e;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.presence-count {
+  color: var(--gold);
+  font-weight: 700;
+}
+.presence-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4a3a2c;
+  flex-shrink: 0;
+}
+.presence-dot.on {
+  background: #7ad06a;
+}
+.presence-msg {
+  color: var(--muted);
+  font-weight: 600;
+}
+.presence-net {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.presence-net.warn {
+  color: #e0a05a;
+}
+.ready-btn.on {
+  background: #7ad06a;
+  border-bottom-color: #4e8f42;
+  color: #16330f;
+}
+
 #deck {
   position: absolute;
   inset: 0;

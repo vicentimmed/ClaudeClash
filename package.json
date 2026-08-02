@@ -4,15 +4,24 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev": "concurrently -k -n web,ws -c cyan,magenta \"vite\" \"npm:dev:server\"",
+    "dev:web": "vite",
+    "dev:server": "tsx watch server/dev.ts",
+    "build": "npm run check && npm run check:server && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "check:server": "tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {
-    "pixi.js": "^8.6.6"
+    "ioredis": "^5.11.1",
+    "pixi.js": "^8.6.6",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.4",
+    "tsx": "^4.23.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
   }

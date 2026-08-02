@@ -2,6 +2,9 @@ import { Application, Container, Graphics, Text } from 'pixi.js';
 import { ARENA } from '../sim/arena';
 import type { Entity, Team, UnitShape } from '../sim/types';
 import type { World } from '../sim/world';
+import { getCharacterSpriteSet } from './sprites/character-loader';
+import { resolveAnimState } from './sprites/resolve-anim-state';
+import { SpriteActor } from './sprites/sprite-actor';
 import { TEAM_COLOR, drawBalloonBombDrop, drawInfernoBeam, drawLightningBolt, drawRagePuddle, drawTeslaTrapdoor, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
 
 const GRASS = 0x6aa834;
@@ -65,6 +68,8 @@ class EntityView {
   lastHidden = false;
   lastTowerActive = false;
   dying = 0;
+  /** SpriteCook animated sprite (troops with visual.spriteCharacter) */
+  spriteActor: SpriteActor | null = null;
 
   constructor() {
     this.root.addChild(this.shadow, this.trapdoor, this.spawnRing, this.spinFx, this.bob, this.zapLine, this.infernoLine, this.bombFx, this.hpBg, this.hpFg);
@@ -358,20 +363,39 @@ export class Renderer {
       view.shadow
         .ellipse(0, 0, e.radius * T * 1.15, e.radius * T * 0.6)
         .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: 0.85 });
-      drawUnit(
-        view.body,
-        e.cardId === 'skeleton_army'
-          ? 'skeleton'
-          : e.cardId === 'minions'
-            ? 'minion'
-            : e.cardId === 'goblins'
-              ? 'goblin'
-              : card.visual.shape,
-        h,
-        card.visual.body,
-        card.visual.accent,
-        e.team,
-      );
+
+      const spriteCharId = card.visual.spriteCharacter;
+      const spriteSet = spriteCharId ? getCharacterSpriteSet(spriteCharId) : undefined;
+      if (spriteSet) {
+        if (!view.spriteActor) {
+          view.spriteActor = new SpriteActor(spriteSet);
+          view.bob.addChild(view.spriteActor.sprite);
+        }
+        view.body.clear();
+        view.body.visible = false;
+        view.spriteActor.sprite.visible = true;
+        view.spriteActor.setPixelHeight(h);
+      } else {
+        if (view.spriteActor) {
+          view.spriteActor.sprite.visible = false;
+        }
+        view.body.visible = true;
+        drawUnit(
+          view.body,
+          e.cardId === 'skeleton_army'
+            ? 'skeleton'
+            : e.cardId === 'minions'
+              ? 'minion'
+              : e.cardId === 'goblins'
+                ? 'goblin'
+                : card.visual.shape,
+          h,
+          card.visual.body,
+          card.visual.accent,
+          e.team,
+        );
+      }
+
       view.lastHidden = e.cardId === 'tesla' && !!e.hidden;
       if (e.cardId === 'tesla') {
         this.syncTeslaTrapdoor(view, e, world, h);
@@ -633,12 +657,20 @@ export class Renderer {
           e.kind === 'troop' &&
           card.projectileSpeed === 0 &&
           card.range <= 1.6 &&
-          e.cardId !== 'balloon'
+          e.cardId !== 'balloon' &&
+          !card.visual.spriteCharacter
         ) {
           view.body.clear();
           drawUnit(view.body, troopShape, th, card.visual.body, card.visual.accent, e.team, {
             swing: swingVal,
           });
+        }
+
+        if (view.spriteActor && card.visual.spriteCharacter) {
+          view.spriteActor.setPixelHeight(th);
+          const animState = resolveAnimState(e);
+          view.spriteActor.setState(animState, swingVal);
+          view.spriteActor.advance(dt, swingVal);
         }
 
         view.bombFx.clear();
@@ -697,7 +729,7 @@ export class Renderer {
             const landK = 1 - e.jumpLandLeft / 0.42;
             bobY += landK * landK * T * 0.14;
             bob.rotation = 0;
-          } else if (e.state === 'moving' && e.speed > 0) {
+          } else if (e.state === 'moving' && e.speed > 0 && !card?.visual.spriteCharacter) {
             const t = e.animT * (4 + e.speed * 2.2);
             bobY -= Math.abs(Math.sin(t)) * T * 0.1;
             bob.rotation = Math.sin(t) * 0.05;
@@ -718,7 +750,7 @@ export class Renderer {
             if (e.cardId === 'balloon' && lunge > 0.05) {
               bobY -= lunge * T * 0.05;
               bob.rotation = lunge * 0.08 * (bob.scale.x >= 0 ? 1 : -1);
-            } else if (e.cardId !== 'xbow' && e.cardId !== 'valkyrie' && e.cardId !== 'inferno') {
+            } else if (e.cardId !== 'xbow' && e.cardId !== 'valkyrie' && e.cardId !== 'inferno' && !card?.visual.spriteCharacter) {
               const lungeMul =
                 e.cardId === 'prince'
                   ? 0.22
@@ -742,7 +774,7 @@ export class Renderer {
         bob.position.y = bobY;
       }
 
-      view.body.tint =
+      const tint =
         e.hitFlash > 0
           ? 0xff9c9c
           : e.stunLeft > 0
@@ -754,6 +786,11 @@ export class Renderer {
             : e.cardId === 'tesla' && e.state === 'attacking' && e.swing > 0.1
               ? 0xc8f8ff
               : 0xffffff;
+      if (view.spriteActor?.sprite.visible) {
+        view.spriteActor.sprite.tint = tint;
+      } else {
+        view.body.tint = tint;
+      }
     }
 
     this.drawPendingSpells(world, alpha);

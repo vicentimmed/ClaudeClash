@@ -1,4 +1,10 @@
-import { ARENA, ARENA_SQUASH, TOWER_SPOTS, nearestBridgeX } from './arena';
+import {
+  ARENA,
+  ARENA_SQUASH,
+  TOWER_SPOTS,
+  nearestBridgeX,
+  towerProjectileOrigin,
+} from './arena';
 import type {
   Balance,
   CardDef,
@@ -13,7 +19,6 @@ import type {
   Team,
   TowerKind,
 } from './types';
-import { towerProjectileOrigin } from '../render/shapes';
 
 const dist = (ax: number, ay: number, bx: number, by: number) =>
   Math.hypot(ax - bx, ay - by);

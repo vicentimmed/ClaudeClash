@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "asset_kind": "animation",
+  "texture_path": "res://SpriteCook/assets/character_idle.png",
+  "sprite_frames_path": "res://SpriteCook/sprite_frames/character_idle.spriteframes.tres",
+  "animation_name": "character_idle",
+  "frame_width": 102,
+  "frame_height": 102,
+  "frame_count": 8,
+  "fps": 8,
+  "recognized_state": "Idle"
+}

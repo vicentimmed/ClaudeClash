@@ -17,6 +17,20 @@ export interface DeckCallbacks {
   onStart: (deck: string[]) => void;
   onTap: () => void;
   onToggleSound: () => void;
+  /** Online only: the player toggled "Estou pronto". */
+  onReadyChange?: (deck: string[], ready: boolean) => void;
+  /** Online only: leave the room and go back to the home screen. */
+  onLeaveRoom?: () => void;
+}
+
+/** Online lobby state shown above the deck. `null` = local (vs CPU) mode. */
+export interface PresenceInfo {
+  count: 0 | 1 | 2;
+  selfReady: boolean;
+  opponentReady: boolean;
+  opponentConnected: boolean;
+  /** Shown on the right of the strip, e.g. while reconnecting. */
+  netNote?: string;
 }
 
 /**
@@ -35,6 +49,12 @@ export class DeckBuilder {
 
   private slots: (string | undefined)[] = [];
   private poolCards: Array<{ id: string; el: HTMLButtonElement }> = [];
+
+  private presenceEl!: HTMLElement;
+  private leaveBtn!: HTMLButtonElement;
+  /** null while playing against the CPU; set only in online mode. */
+  private presence: PresenceInfo | null = null;
+  private selfReady = false;
 
   private suppressClick = false;
   private dragGhost: HTMLElement | null = null;
@@ -81,10 +101,12 @@ export class DeckBuilder {
         <span class="deck-avg" data-role="avg"></span>
         <button class="icon-btn square" data-role="sound" aria-label="Som"></button>
       </div>
+      <div class="presence" data-role="presence" hidden></div>
       <div class="deck-slots" data-role="slots"></div>
       <div class="deck-sub">Toque para adicionar · arraste no deck para ordenar</div>
       <div class="deck-pool" data-role="pool"></div>
       <div class="deck-foot">
+        <button class="ghost-btn" data-role="leave" hidden>Sair</button>
         <button class="ghost-btn" data-role="random">Aleatório</button>
         <button class="big-btn" data-role="play">Jogar</button>
       </div>
@@ -97,20 +119,68 @@ export class DeckBuilder {
     this.avgEl = q('avg');
     this.playBtn = q<HTMLButtonElement>('play');
     this.soundBtn = q<HTMLButtonElement>('sound');
+    this.presenceEl = q('presence');
+    this.leaveBtn = q<HTMLButtonElement>('leave');
 
     this.soundBtn.addEventListener('click', () => this.cb.onToggleSound());
+    this.leaveBtn.addEventListener('click', () => this.cb.onLeaveRoom?.());
 
     q<HTMLButtonElement>('random').addEventListener('click', () => {
+      if (this.locked) return;
       this.cb.onTap();
       this.slots = this.randomDeck();
       this.refresh();
     });
     this.playBtn.addEventListener('click', () => {
       if (this.filledCount() !== this.size) return;
+      if (this.presence) {
+        // Online: this is the ready toggle, not a match start.
+        this.selfReady = !this.selfReady;
+        this.cb.onReadyChange?.(this.deckOrder(), this.selfReady);
+        this.refresh();
+        return;
+      }
       this.cb.onStart(this.deckOrder());
     });
 
     this.buildPool();
+  }
+
+  /**
+   * Switches the screen into online lobby mode. Passing `null` returns it to
+   * the plain vs-CPU behaviour, so the bot flow is untouched.
+   */
+  setPresence(info: PresenceInfo | null) {
+    this.presence = info;
+    if (!info) this.selfReady = false;
+    else this.selfReady = info.selfReady;
+    this.refresh();
+  }
+
+  private refreshPresence() {
+    const p = this.presence;
+    this.presenceEl.hidden = !p;
+    this.leaveBtn.hidden = !p;
+    if (!p) return;
+
+    const waiting = p.count < 2;
+    const msg = waiting
+      ? 'Esperando o outro jogador…'
+      : p.opponentReady
+        ? 'Oponente está pronto!'
+        : 'Oponente montando o deck…';
+
+    this.presenceEl.innerHTML = `
+      <span class="presence-dot on"></span>
+      <span class="presence-dot ${p.count === 2 ? 'on' : ''}"></span>
+      <span class="presence-count">${p.count}/2</span>
+      <span class="presence-msg"></span>
+      <span class="presence-net"></span>
+    `;
+    this.presenceEl.querySelector('.presence-msg')!.textContent = msg;
+    const net = this.presenceEl.querySelector<HTMLElement>('.presence-net')!;
+    net.textContent = p.netNote ?? '';
+    net.classList.toggle('warn', Boolean(p.netNote));
   }
 
   private buildPool() {
@@ -160,7 +230,13 @@ export class DeckBuilder {
     return this.slots.findIndex((id) => id === undefined);
   }
 
+  /** Once ready, the deck is locked — the server already has it. */
+  private get locked() {
+    return this.presence !== null && this.selfReady;
+  }
+
   private toggle(id: string) {
+    if (this.locked) return;
     this.cb.onTap();
     const at = this.slotIndexOf(id);
     if (at >= 0) {
@@ -175,6 +251,7 @@ export class DeckBuilder {
   }
 
   private removeFromSlot(index: number) {
+    if (this.locked) return;
     const id = this.slots[index];
     if (!id) return;
     this.cb.onTap();
@@ -234,8 +311,20 @@ export class DeckBuilder {
       ? this.deckOrder().reduce((sum, cid) => sum + this.balance.cards[cid].cost, 0) / this.size
       : 0;
     this.avgEl.textContent = full ? `custo médio ${avg.toFixed(1)}` : '';
-    this.playBtn.disabled = !full;
 
+    if (this.presence) {
+      this.playBtn.textContent = this.selfReady ? 'Pronto ✓' : 'Estou pronto';
+      this.playBtn.classList.toggle('ready-btn', true);
+      this.playBtn.classList.toggle('on', this.selfReady);
+      // Locked in while ready, so the deck can't change under the server.
+      this.playBtn.disabled = !full;
+    } else {
+      this.playBtn.textContent = 'Jogar';
+      this.playBtn.classList.remove('ready-btn', 'on');
+      this.playBtn.disabled = !full;
+    }
+
+    this.refreshPresence();
     this.refreshPool();
   }
 
@@ -256,6 +345,7 @@ export class DeckBuilder {
     }
 
     slotEl.addEventListener('pointerdown', (ev) => {
+      if (this.locked) return;
       if (ev.pointerType === 'mouse' && ev.button !== 0) return;
       // Prevent browser image-drag / text selection so pointermove keeps firing.
       ev.preventDefault();

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "sourceCharacterName": "Character_Idle",
+  "perspective": "isometric",
+  "controllerMode": "topdown3d",
+  "sprite_frames_path": "res://SpriteCook/sprite_frames/Character.spriteframes.tres",
+  "animations": {
+    "Idle": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "Walk": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "Run": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "Jump": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "Fall": "res://SpriteCook/assets/character_idle.spritecook.json"
+  },
+  "directionalAnimations": {
+    "IdleDown": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "IdleUp": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "IdleRight": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "WalkDown": "res://SpriteCook/assets/character_front_walk_walk_down.spritecook.json",
+    "WalkUp": "res://SpriteCook/assets/character_front_walk_walk_down.spritecook.json",
+    "WalkRight": "res://SpriteCook/assets/character_front_walk_walk_down.spritecook.json",
+    "RunDown": "res://SpriteCook/assets/character_front_walk_walk_down.spritecook.json",
+    "RunUp": "res://SpriteCook/assets/character_front_walk_walk_down.spritecook.json",
+    "RunRight": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "Attack": "res://SpriteCook/assets/character_attack.spritecook.json",
+    "Hurt": "res://SpriteCook/assets/character_idle.spritecook.json",
+    "Death": "res://SpriteCook/assets/character_idle.spritecook.json"
+  }
+}

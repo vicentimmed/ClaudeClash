@@ -45,6 +45,8 @@ export interface Visual {
   accent: string;
   /** height in tiles */
   scale: number;
+  /** SpriteCook character id (e.g. "golem") — uses sprite sheets instead of procedural art */
+  spriteCharacter?: string;
 }
 
 export interface CardDef {

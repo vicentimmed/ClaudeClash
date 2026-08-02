@@ -1,7 +1,17 @@
 import type { Balance, MatchResult } from '../sim/types';
 import type { SpeedMultiplier } from '../dev/settings';
-import type { Hand, World } from '../sim/world';
+import type { World } from '../sim/world';
 import { shade } from '../render/shapes';
+
+/**
+ * Just the parts of a hand the HUD draws. In a local match this is the real
+ * `Hand`; online it's a plain object mirroring what the server sent, since the
+ * client must never shuffle a deck of its own.
+ */
+export interface HandView {
+  hand: string[];
+  next: string;
+}
 
 export interface UiCallbacks {
   onSelectCard: (index: number | null) => void;
@@ -197,6 +207,8 @@ export class Ui {
   private wireCardDrag(btn: HTMLButtonElement, index: number) {
     const THRESHOLD = 14;
 
+    btn.addEventListener('dragstart', (ev) => ev.preventDefault());
+
     btn.addEventListener('pointerdown', (ev) => {
       if (ev.pointerType === 'mouse' && ev.button !== 0) return;
       this.dragState = {
@@ -206,6 +218,8 @@ export class Ui {
         startY: ev.clientY,
         dragging: false,
       };
+      // Capture keeps pointermove/up coming to this button even once the
+      // cursor is out over the arena.
       btn.setPointerCapture(ev.pointerId);
     });
 
@@ -258,7 +272,7 @@ export class Ui {
   private moveGhost(x: number, y: number) {
     if (!this.dragGhost) return;
     this.dragGhost.style.left = `${x}px`;
-    this.dragGhost.style.top = `${y - 74}px`;
+    this.dragGhost.style.top = `${y}px`;
   }
 
   private destroyGhost() {
@@ -272,6 +286,7 @@ export class Ui {
         <h1 data-role="title"></h1>
         <p data-role="sub"></p>
         <button class="big-btn" data-role="again">Jogar de novo</button>
+        <p class="result-auto" data-role="auto" hidden></p>
       </div>
     `;
     this.overlay
@@ -315,6 +330,9 @@ export class Ui {
     art.className = 'card-art';
     art.src = this.art(cardId, size);
     art.alt = card.name;
+    // Without this the browser starts its own image drag on mousedown+move,
+    // which cancels the pointer stream and kills drag-to-deploy on desktop.
+    art.draggable = false;
     face.appendChild(art);
     if (withName) {
       const name = document.createElement('div');
@@ -324,7 +342,7 @@ export class Ui {
     }
   }
 
-  syncHand(hand: Hand) {
+  syncHand(hand: HandView) {
     const sig = hand.hand.join(',');
     if (sig !== this.handSignature) {
       this.handSignature = sig;
@@ -349,7 +367,7 @@ export class Ui {
     }
   }
 
-  update(world: World, hand: Hand) {
+  update(world: World, hand: HandView) {
     this.syncHand(hand);
 
     const elixir = world.elixir[0];
@@ -388,7 +406,15 @@ export class Ui {
     }
   }
 
-  showResult(result: MatchResult, crowns: [number, number] = [0, 0]) {
+  /**
+   * `opts.autoText` swaps the "Jogar de novo" button for a status line — used
+   * online, where the server decides where everyone goes next.
+   */
+  showResult(
+    result: MatchResult,
+    crowns: [number, number] = [0, 0],
+    opts?: { autoText?: string },
+  ) {
     const info = RESULT_TEXT[result];
     const title = this.overlay.querySelector<HTMLElement>('[data-role="title"]')!;
     title.textContent = info.title;
@@ -397,7 +423,19 @@ export class Ui {
     this.overlay.querySelector<HTMLElement>('[data-role="sub"]')!.textContent = threeCrowns
       ? 'A Torre do Rei caiu.'
       : info.sub;
+
+    const again = this.overlay.querySelector<HTMLElement>('[data-role="again"]')!;
+    const auto = this.overlay.querySelector<HTMLElement>('[data-role="auto"]')!;
+    again.hidden = Boolean(opts?.autoText);
+    auto.hidden = !opts?.autoText;
+    auto.textContent = opts?.autoText ?? '';
+
     this.overlay.classList.add('show');
+  }
+
+  /** Online matches hide the buttons that would yank you out of a live game. */
+  setOnlineMode(online: boolean) {
+    this.topbar.classList.toggle('online', online);
   }
 
   hideResult() {

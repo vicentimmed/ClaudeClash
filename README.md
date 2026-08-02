@@ -1,24 +1,84 @@
-# ClaudeClash — protótipo v2
+# ClaudeClash — protótipo v3
 
-Jogo estilo Clash Royale no navegador. Esta versão é **local** (você contra um bot),
-feita para testar jogabilidade e balanceamento antes de entrar a parte online.
+Jogo estilo Clash Royale no navegador, com dois modos: **contra o CPU** (local, sem
+servidor) e **online 1v1** (dois amigos, sala única).
 
 ```bash
 npm install
 npm run dev
 ```
 
-Abre em `http://localhost:5173`. A tela é travada em 9:16 (celular); no desktop
-aparece com moldura.
+Sobe o cliente e o servidor juntos em `http://localhost:5173`. A tela é travada em
+9:16 (celular); no desktop aparece com moldura.
+
+| Comando | O que faz |
+|---|---|
+| `npm run dev` | cliente + servidor de partida juntos |
+| `npm run dev:web` | só o cliente (o modo CPU funciona sem servidor) |
+| `npm run dev:server` | só o servidor WebSocket |
+| `npm run build` | checa os tipos dos dois lados e gera o `dist/` |
 
 ## Fluxo
 
 ```
-Deck builder (escolha 8 de 16)  →  Jogar  →  Partida  →  Resultado  →  Deck builder
+Tela inicial ─┬─ Jogar contra o CPU → Deck builder → Partida → Resultado ↺
+              │
+              └─ Jogar Online → Lobby (1/2 → 2/2) → Estou pronto ×2 → Partida → Resultado
+                                        ↑                                        │
+                                        └──── ninguém caiu ──────────────────────┘
+                                        (se alguém caiu → volta pra tela inicial)
 ```
 
-O botão de cartas na barra de cima volta ao deck builder a qualquer momento. O deck
-escolhido fica salvo. O bot sorteia 8 cartas a cada partida.
+## Online
+
+Uma sala fixa, no máximo 2 jogadores, sem código nem link. O servidor é a fonte da
+verdade: ele roda a simulação a 20 ticks/s e manda o estado pros dois; o navegador só
+desenha e envia "quero jogar essa carta aqui".
+
+- **Contador de jogadores** e estado de "pronto" ao vivo na tela de deck
+- **Cada um se vê embaixo** — para quem é o jogador 2 o tabuleiro inteiro é girado
+  180° no envio, e os toques dele são girados de volta na chegada
+- **Terceiro jogador é recusado** enquanto a sala está cheia
+- **Desconexão no meio da partida não derruba a partida**: quem ficou continua
+  jogando e atacando; o lado de quem caiu só para de receber cartas novas
+- **Reconexão retoma a partida em andamento**, com a mão e o estado atuais
+- Fim de partida: os dois voltam pro deck se ninguém caiu; pra tela inicial se caiu
+- O balanceamento usado online é sempre o **do servidor**, nunca o editado localmente
+
+### Testar sozinho em duas janelas
+
+Duas abas do mesmo navegador compartilham o `localStorage`, então seriam o *mesmo*
+jogador. Use `?player=` para dar identidades diferentes:
+
+```
+http://localhost:5173/?player=alice
+http://localhost:5173/?player=bob
+```
+
+## Deploy na Vercel
+
+1. Conecte o repositório na Vercel (Add New → Project → importar do Git). O
+   `vercel.json` já diz o que fazer; não precisa configurar build.
+2. **Ative o beta de WebSocket** no painel da Vercel (Project → Settings). Sem isso a
+   função `api/ws.ts` não aceita conexões. Fluid Compute precisa estar ligado (é o
+   padrão em projetos novos).
+3. Pronto — cada `git push` faz o deploy do cliente e do servidor juntos.
+
+**Limite do plano gratuito:** a Vercel encerra a conexão WebSocket a cada 5 minutos,
+que é a duração máxima de uma partida. A reconexão automática cobre isso — no lobby
+nem se percebe e numa partida é uma pausa de menos de um segundo. No plano Pro dá pra
+subir esse limite (`maxDuration` no `vercel.json`) e o corte praticamente não acontece.
+
+### Redis (opcional)
+
+Sem configurar nada, o estado da sala fica na memória do servidor — o que funciona
+enquanto os dois jogadores caírem na mesma instância, que é o caso normal com duas
+pessoas. A Vercel não garante isso: se os dois caírem em instâncias diferentes, um não
+enxerga o outro.
+
+Para eliminar essa possibilidade, adicione um Redis pelo Marketplace da Vercel e
+defina `REDIS_URL` (ou `KV_URL`) nas variáveis de ambiente. O código detecta sozinho e
+passa a compartilhar sala, autoridade e mensagens entre instâncias.
 
 ## O que já funciona
 
@@ -93,7 +153,11 @@ Dois caminhos, os dois valem para todo mundo que jogar:
    ponto de partida de todo mundo. *Restaurar padrão* volta para ele.
 
 Use **Exportar** para baixar um `cards.json` com seus ajustes e **Importar** para
-carregar um de volta. Quando o servidor entrar, esse mesmo arquivo passa a viver lá.
+carregar um de volta.
+
+> Esses ajustes valem só para o modo **contra o CPU**. Uma partida online sempre roda
+> com o `cards.json` que está no servidor — senão daria para editar a própria vida e
+> trapacear. Para mudar o online, edite `src/balance/cards.json` e faça o deploy.
 
 ### Campos por carta
 
@@ -140,9 +204,17 @@ src/
 ├─ render/                PixiJS
 │  ├─ shapes.ts           cada personagem, o Rei e a Princesa desenhados por código
 │  └─ renderer.ts         arena, sprites, projéteis, partículas
-├─ ui/                    deck builder, HUD e editor de balanceamento (DOM)
-└─ game.ts                cola tudo: telas, loop, input, áudio
+├─ net/                   protocolo, cliente WebSocket e espelhamento do tabuleiro
+├─ ui/                    tela inicial, deck builder, HUD e editor de balanceamento
+└─ game.ts                cola tudo: telas, loop, input, áudio, modo online
+
+api/ws.ts                 entrada do servidor na Vercel (WebSocket)
+server/
+├─ hub.ts                 sala, prontidão, autoridade e loop autoritativo
+├─ store.ts               estado compartilhado (memória ou Redis)
+└─ dev.ts                 entrada equivalente para rodar local
 ```
 
-`src/sim/` não importa nada do Pixi de propósito: quando a parte online entrar, esse
-mesmo código roda no servidor Node como fonte da verdade, e o cliente só desenha.
+`src/sim/` não importa nada do Pixi de propósito — é exatamente por isso que o mesmo
+código roda no servidor Node como fonte da verdade da partida online, com o cliente
+apenas desenhando o que recebe.

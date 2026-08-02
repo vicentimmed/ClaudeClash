@@ -46,3 +46,45 @@ export function inRiverBand(y: number): boolean {
 export function sideOfX(x: number): 'left' | 'right' {
   return x < ARENA.width / 2 ? 'left' : 'right';
 }
+
+/**
+ * Sim-space offset (tiles) from a tower entity centre to its muzzle / bow.
+ *
+ * Lives here rather than next to the tower drawing code because the simulation
+ * needs it to spawn projectiles, and `src/sim/` must stay free of any renderer
+ * (and therefore Pixi) imports so it can run on the Node server.
+ */
+export function towerProjectileOrigin(
+  kind: TowerKind,
+  squash: number,
+  active: boolean,
+  opts?: {
+    bowFlip?: number;
+    aimRad?: number;
+  },
+): { ox: number; oy: number } {
+  const bodyH = (kind === 'king' ? 1.6 : 1.4) * squash + 0.45;
+  const merlon = 0.34;
+  const crewH = kind === 'king' ? 1.3 : 1.1;
+  const baseY = -(bodyH + merlon);
+
+  if (kind === 'princess') {
+    const flip = opts?.bowFlip ?? 1;
+    return {
+      ox: flip * crewH * 0.41,
+      oy: (baseY - crewH * 0.6) / squash,
+    };
+  }
+
+  if (!active) {
+    return { ox: 0, oy: (baseY - crewH * 0.5) / squash };
+  }
+
+  const pivotY = (baseY - crewH * 0.12) / squash;
+  const barrelLen = crewH * 0.52;
+  const angle = opts?.aimRad ?? -Math.PI / 2;
+  return {
+    ox: Math.cos(angle) * barrelLen,
+    oy: pivotY + Math.sin(angle) * barrelLen,
+  };
+}

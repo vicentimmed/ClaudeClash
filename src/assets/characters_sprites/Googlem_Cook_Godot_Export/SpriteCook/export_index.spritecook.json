@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "source_character_name": "Character Idle",
+  "assets": [
+    {
+      "animation_name": "character_idle",
+      "texture_path": "res://SpriteCook/assets/character_idle.png",
+      "metadata_path": "res://SpriteCook/assets/character_idle.spritecook.json",
+      "sprite_frames_path": "res://SpriteCook/sprite_frames/character_idle.spriteframes.tres",
+      "recognized_state": "Idle"
+    },
+    {
+      "animation_name": "character_front_walk_walk_down",
+      "texture_path": "res://SpriteCook/assets/character_front_walk_walk_down.png",
+      "metadata_path": "res://SpriteCook/assets/character_front_walk_walk_down.spritecook.json",
+      "sprite_frames_path": "res://SpriteCook/sprite_frames/character_front_walk_walk_down.spriteframes.tres",
+      "recognized_state": "WalkDown"
+    },
+    {
+      "animation_name": "character_attack",
+      "texture_path": "res://SpriteCook/assets/character_attack.png",
+      "metadata_path": "res://SpriteCook/assets/character_attack.spritecook.json",
+      "sprite_frames_path": "res://SpriteCook/sprite_frames/character_attack.spriteframes.tres",
+      "recognized_state": "Attack"
+    }
+  ]
+}
