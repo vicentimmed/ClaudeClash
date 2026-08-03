@@ -161,7 +161,10 @@ export class DeckBuilder {
     const p = this.presence;
     this.presenceEl.hidden = !p;
     this.leaveBtn.hidden = !p;
-    if (!p) return;
+    if (!p) {
+      this.presenceEl.innerHTML = '';
+      return;
+    }
 
     const waiting = p.count < 2;
     const msg = waiting

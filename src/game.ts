@@ -184,27 +184,36 @@ export class Game {
 
   // ------------------------------------------------------------ mode switch
 
+  /** Drops socket, lobby state and UI flags shared by home/local/online transitions. */
+  private teardownOnlineSession() {
+    this.net?.leave();
+    this.net = null;
+    this.netStatus = 'idle';
+    this.running = false;
+    this.online.inMatch = false;
+    this.online.selfReady = false;
+    this.online.opponentReady = false;
+    this.online.opponentConnected = false;
+    this.online.count = 0;
+    this.countdown.cancel();
+    this.deckBuilder.setPresence(null);
+    this.ui.setOnlineMode(false);
+  }
+
   private startLocalMode() {
     this.mode = 'local';
+    this.teardownOnlineSession();
     this.home.close();
-    this.ui.setOnlineMode(false);
-    this.deckBuilder.setPresence(null);
     this.openDeckBuilder();
   }
 
   /** Back to the two-button screen, dropping any online session. */
   private goHome(note = '') {
     this.mode = 'home';
-    this.running = false;
-    this.online.inMatch = false;
-    this.net?.leave();
-    this.net = null;
-    this.countdown.cancel();
-    this.deckBuilder.setPresence(null);
+    this.teardownOnlineSession();
     this.deckBuilder.close();
     this.ui.hideResult();
     this.ui.clearSelection();
-    this.ui.setOnlineMode(false);
     this.renderer.zoneMode = 'none';
     this.renderer.deployPreview = null;
     this.hint.style.display = 'none';
@@ -222,18 +231,11 @@ export class Game {
   // ----------------------------------------------------------------- online
 
   private startOnlineMode() {
+    this.teardownOnlineSession();
     this.mode = 'online';
     this.home.close();
     this.ui.setOnlineMode(true);
-    this.online = {
-      count: 0,
-      selfReady: false,
-      opponentReady: false,
-      opponentConnected: false,
-      inMatch: false,
-      lastSnapshotAt: 0,
-    };
-    this.running = false;
+    this.online.lastSnapshotAt = 0;
     this.openOnlineLobby();
 
     this.net = new NetworkClient({
@@ -247,6 +249,7 @@ export class Game {
   }
 
   private openOnlineLobby() {
+    this.home.close();
     this.running = false;
     this.online.inMatch = false;
     this.countdown.cancel();
@@ -436,6 +439,7 @@ export class Game {
   // ---------------------------------------------------------------- screens
 
   private openDeckBuilder() {
+    this.home.close();
     this.running = false;
     this.countdown.cancel();
     this.ui.hideResult();
@@ -450,6 +454,13 @@ export class Game {
   }
 
   private startMatch(deck: string[]) {
+    // A visit to the online lobby can leave `mode === 'online'` while the deck
+    // screen already looks local (presence cleared). The countdown only flips
+    // `running` in local mode, so fix the mismatch before starting.
+    if (this.mode !== 'local') {
+      this.teardownOnlineSession();
+      this.mode = 'local';
+    }
     this.balance.deck = deck;
     saveBalance(this.balance);
     saveDeck(deck);

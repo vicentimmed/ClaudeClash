@@ -716,7 +716,7 @@ body {
 
 /* ------------------------------------------------------- online lobby strip */
 
-.presence {
+.presence:not([hidden]) {
   display: flex;
   align-items: center;
   gap: 8px;

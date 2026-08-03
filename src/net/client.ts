@@ -96,6 +96,8 @@ export class NetworkClient {
     this.ws = ws;
 
     ws.addEventListener('open', () => {
+      // The socket may finish opening after `leave()` — ignore stale connects.
+      if (!this.wanted || this.ws !== ws) return;
       this.retryDelay = 500;
       this.setStatus('online');
       // Identifying immediately is what makes a reconnect resume the slot.
