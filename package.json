@@ -7,7 +7,8 @@
     "dev": "kill-port 5173 7799 --silent 2>/dev/null || true && concurrently -k -n web,ws -c cyan,magenta \"vite\" \"npm:dev:server\"",
     "dev:web": "vite",
     "dev:server": "tsx watch server/dev.ts",
-    "build": "npm run check && npm run check:server && vite build",
+    "build": "npm run check && npm run check:server && npm run build:ws && vite build",
+    "build:ws": "esbuild server/ws.ts --bundle --platform=node --target=node20 --format=esm --outfile=api/ws.js --packages=external",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "check:server": "tsc -p tsconfig.server.json --noEmit"
@@ -21,6 +22,7 @@
     "@types/node": "^22.20.1",
     "@types/ws": "^8.18.1",
     "concurrently": "^9.2.4",
+    "esbuild": "^0.25.0",
     "kill-port": "^2.0.1",
     "tsx": "^4.23.4",
     "typescript": "^5.7.2",

@@ -15,7 +15,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["api", "server", "src/sim", "src/net", "src/balance"],
+  "include": ["server", "src/sim", "src/net", "src/balance"],
   // client.ts is the browser half of src/net (uses `location`, `WebSocket`);
   // the server only shares protocol.ts and perspective.ts from that folder.
   "exclude": ["src/net/client.ts"]

@@ -6,16 +6,16 @@
  * Requires Fluid compute, which is the default for projects created after
  * 2025-04-23.
  *
- * This file is deliberately thin: it owns the socket lifecycle and heartbeat,
- * and hands every decision to `server/hub.ts`.
+ * Source lives here; `npm run build:ws` bundles this file to `api/ws.js` for
+ * deploy. Locally, `server/dev.ts` imports this module directly.
  */
 
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { decode, encode, type ClientMsg } from '../src/net/protocol';
-import { Hub, type Conn } from '../server/hub';
-import { createStore } from '../server/store';
+import { Hub, type Conn } from './hub';
+import { createStore } from './store';
 
 const HEARTBEAT_MS = 15000;
 
