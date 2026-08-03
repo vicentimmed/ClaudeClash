@@ -338,7 +338,8 @@ export type Effect =
   | { type: 'splash'; x: number; y: number; radius: number }
   | { type: 'death'; x: number; y: number; color: string; scale: number }
   | { type: 'deploy'; x: number; y: number }
-  | { type: 'towerDown'; x: number; y: number }
+  /** `team` é o dono da torre destruída — quem pontuou é o time oposto. */
+  | { type: 'towerDown'; x: number; y: number; team: Team }
   | { type: 'spell'; x: number; y: number; radius: number; shape: UnitShape }
   | { type: 'teslaZap'; x0: number; y0: number; x1: number; y1: number }
   | { type: 'infernoBeam'; x0: number; y0: number; x1: number; y1: number; stage: number };

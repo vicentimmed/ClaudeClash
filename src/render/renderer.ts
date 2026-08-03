@@ -7,6 +7,7 @@ import { resolveAnimState } from './sprites/resolve-anim-state';
 import { SpriteActor } from './sprites/sprite-actor';
 import { TEAM_COLOR, drawBalloonBombDrop, drawInfernoBeam, drawLightningBolt, drawRagePuddle, drawTeslaTrapdoor, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
 import { drawDeployZone, drawTerrain, drawVignette, drawWaterFx } from './arena-art';
+import { Crowd, STANDS } from './crowd';
 
 /**
  * Gameplay draw scale — card art keeps balance `visual.scale`; troops can read
@@ -135,6 +136,18 @@ export class Renderer {
   tile = 20;
   squash = 0.72;
 
+  /**
+   * Faixa de arquibancada em cada lateral / topo e base, em px. Zero quando a
+   * plateia está desligada — e aí o tabuleiro volta a ocupar a tela inteira.
+   */
+  private marginX = 0;
+  private marginY = 0;
+  /** Vão real (px) sobrando acima e abaixo do tabuleiro dentro do palco. */
+  private bandY = 0;
+
+  private crowd = new Crowd();
+  private crowdEnabled = true;
+
   private root = new Container();
   private arenaG = new Graphics();
   private waterFxG = new Graphics();
@@ -189,6 +202,8 @@ export class Renderer {
     host.appendChild(this.app.canvas);
     this.entityLayer.sortableChildren = true;
     this.root.addChild(
+      // a plateia vive fora do tabuleiro, atrás de tudo, e acompanha o shake
+      this.crowd.view,
       this.arenaG,
       this.waterFxG,
       this.groundFxLayer,
@@ -206,24 +221,59 @@ export class Renderer {
     this.layout();
   }
 
+  /**
+   * Liga/desliga a arquibancada. Desligada, a margem some e o tabuleiro volta
+   * a ocupar 100% da largura — exatamente o layout anterior à plateia.
+   */
+  setCrowdEnabled(on: boolean) {
+    if (this.crowdEnabled === on) return;
+    this.crowdEnabled = on;
+    if (!on) this.crowd.clear();
+    this.crowd.view.visible = on;
+    if (this.host) this.layout();
+  }
+
   /** Fit the 18x32 board into the available box, squashing vertically for a 2.5D feel. */
   layout() {
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
     if (w <= 0 || h <= 0) return;
-    this.tile = w / ARENA.width;
-    this.squash = Math.min(1, Math.max(0.5, h / (ARENA.height * this.tile)));
+
+    // A arquibancada rouba largura do tabuleiro; sem ela os dois fatores são
+    // zero e o cálculo é idêntico ao original (`tile = w / ARENA.width`).
+    const mxTiles = this.crowdEnabled ? STANDS.marginXTiles : 0;
+    const myTiles = this.crowdEnabled ? STANDS.marginYTiles : 0;
+    this.tile = w / (ARENA.width + 2 * mxTiles);
+    this.marginX = mxTiles * this.tile;
+    this.marginY = myTiles * this.tile;
+
+    const availH = Math.max(1, h - 2 * this.marginY);
+    this.squash = Math.min(1, Math.max(0.5, availH / (ARENA.height * this.tile)));
+
+    const boardW = ARENA.width * this.tile;
+    const boardH = ARENA.height * this.tile * this.squash;
+    // o tabuleiro continua centrado; a sobra vertical vira faixa de plateia
+    this.bandY = Math.max(0, (h - boardH) / 2);
+
     // Pivot at the board centre so the shake can roll the camera without the
     // whole arena swinging off a corner.
-    this.root.pivot.set(w / 2, (ARENA.height * this.tile * this.squash) / 2);
+    this.root.pivot.set(boardW / 2, boardH / 2);
     this.applyCamera(0, 0, 0);
     drawTerrain(this.arenaG, this.tile, this.squash);
-    drawVignette(
-      this.vignetteG,
-      ARENA.width * this.tile,
-      ARENA.height * this.tile * this.squash,
-      this.tile,
-    );
+    drawVignette(this.vignetteG, boardW, boardH, this.tile);
+
+    if (this.crowdEnabled) {
+      this.crowd.build(this.app.renderer, {
+        tile: this.tile,
+        squash: this.squash,
+        boardW,
+        boardH,
+        marginX: this.marginX,
+        bandTop: this.bandY,
+        bandBottom: this.bandY,
+      });
+    }
+
     for (const view of this.views.values()) view.lastHpRatio = -1;
     this.rebuildBodies();
   }
@@ -250,7 +300,7 @@ export class Renderer {
   fromScreen(px: number, py: number): [number, number] {
     const boardH = ARENA.height * this.tile * this.squash;
     const topY = (this.host.clientHeight - boardH) / 2;
-    return [px / this.tile, (py - topY) / (this.tile * this.squash)];
+    return [(px - this.marginX) / this.tile, (py - topY) / (this.tile * this.squash)];
   }
 
   private drawZone(world: World) {
@@ -548,6 +598,9 @@ export class Renderer {
 
   draw(world: World, alpha: number, dt: number) {
     this.syncViews(world);
+    // relógio próprio, não `world.time`: a plateia continua se mexendo durante
+    // o hit-stop que congela a simulação quando uma torre cai
+    if (this.crowdEnabled) this.crowd.update(dt);
     drawWaterFx(this.waterFxG, this.tile, this.squash, world.time);
     this.drawTension(world.time);
     this.drawZone(world);
@@ -929,7 +982,7 @@ export class Renderer {
     const boardH = ARENA.height * this.tile * this.squash;
     const restY = (this.host.clientHeight - boardH) / 2;
     this.root.position.set(
-      (ARENA.width * this.tile) / 2 + dx,
+      this.marginX + (ARENA.width * this.tile) / 2 + dx,
       restY + boardH / 2 + dy,
     );
     this.root.rotation = roll;
@@ -1153,6 +1206,15 @@ export class Renderer {
           this.flash = 0.35;
           // the whole match should feel the tower go down
           this.hitStop = 0.09;
+          // a plateia vai ao delírio, com a ola partindo da torre que caiu
+          if (this.crowdEnabled) {
+            this.crowd.cheer(sx, sy);
+            // `fx.team` é o dono da torre destruída — quem comemora é o outro
+            const color = TEAM_COLOR[fx.team === 0 ? 1 : 0];
+            for (const p of this.crowd.confettiPoints(7)) {
+              this.burst(p.x, p.y, color, 8, this.tile * 0.12, 1.5, { lift: 2.6, spread: 0.7 });
+            }
+          }
           break;
         }
         case 'spell': {

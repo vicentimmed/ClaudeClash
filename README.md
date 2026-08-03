@@ -92,6 +92,8 @@ passa a compartilhar sala, autoridade e mensagens entre instâncias.
   Corredor que pula o rio
 - Bot adversário (defende, contra-ataca e joga feitiço quando você agrupa tropas)
 - **Música e efeitos sonoros** sintetizados na hora (Web Audio, zero arquivos)
+- **Plateia** de goblins e caveiras na arquibancada, que pula e comemora em ola
+  quando uma torre cai (ver *Plateia*, abaixo)
 - Editor de balanceamento no botão de ajustes
 
 ## As 16 cartas
@@ -129,6 +131,22 @@ passa a compartilhar sala, autoridade e mensagens entre instâncias.
 
 Feitiços causam só **35 %** do dano em torres (`towerDamageFactor`).
 
+## Plateia
+
+`src/render/crowd.ts` desenha as arquibancadas em volta do campo. Ligada, ela
+reserva `STANDS.marginXTiles` de cada lado (e `marginYTiles` em cima e embaixo),
+então o tabuleiro fica ~9 % mais estreito; desligada, a margem é zero e o layout
+volta a ser exatamente o de antes — largura cheia da tela.
+
+- **Botão de ajustes → Cenário → Plateia** liga e desliga, e a escolha fica
+  salva junto com as outras preferências (`claudeclash.dev.v1`).
+- Os ~165 espectadores são só `Sprite`s de 8 texturas geradas uma vez por
+  layout: por frame muda apenas posição e rotação.
+- A comemoração dispara no efeito `towerDown`, com a ola partindo da torre que
+  caiu e o confete na cor de quem pontuou (`Effect.towerDown.team` é o dono da
+  torre destruída — por isso `flipEffect` troca o time no modo online).
+- Som: `crowdCheer`, sintetizado como os outros — rugido, palmas e vozes.
+
 ## Som
 
 Tudo é gerado por osciladores e ruído filtrado — nenhum arquivo de áudio.
@@ -136,8 +154,8 @@ Tudo é gerado por osciladores e ruído filtrado — nenhum arquivo de áudio.
 - **Música**: loop de 4 compassos em lá menor (Am–F–C–G) a 104 bpm, com baixo,
   arpejo, pad e percussão leve, agendado com lookahead de 120 ms
 - **Efeitos**: seleção de carta, invocação, golpe corpo a corpo, tiro, dano em área,
-  cada feitiço com o seu timbre, morte, queda de torre, elixir cheio, contagem
-  regressiva dos últimos 5 s, vitória e derrota
+  cada feitiço com o seu timbre, morte, queda de torre, plateia eufórica,
+  elixir cheio, contagem regressiva dos últimos 5 s, vitória e derrota
 
 O botão de alto-falante liga/desliga tudo e a escolha fica salva. O navegador só
 libera áudio depois do primeiro toque na tela — isso é política de autoplay, não bug.
@@ -203,6 +221,8 @@ src/
 │  └─ bot.ts              adversário
 ├─ render/                PixiJS
 │  ├─ shapes.ts           cada personagem, o Rei e a Princesa desenhados por código
+│  ├─ arena-art.ts        grama, terra, rio, pontes e vinheta do tabuleiro
+│  ├─ crowd.ts            arquibancada, espectadores e a comemoração
 │  └─ renderer.ts         arena, sprites, projéteis, partículas
 ├─ net/                   protocolo, cliente WebSocket e espelhamento do tabuleiro
 ├─ ui/                    tela inicial, deck builder, HUD e editor de balanceamento

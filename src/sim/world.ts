@@ -1272,7 +1272,7 @@ export class World {
       if (e.kind === 'tower') {
         e.rubble = true;
         this.crowns[e.team === 0 ? 1 : 0] += 1;
-        this.effects.push({ type: 'towerDown', x: e.x, y: e.y });
+        this.effects.push({ type: 'towerDown', x: e.x, y: e.y, team: e.team });
         // losing a princess wakes up your king
         for (const t of this.entities) {
           if (t.team === e.team && t.towerKind === 'king' && t.hp > 0) t.active = true;

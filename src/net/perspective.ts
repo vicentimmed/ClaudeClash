@@ -83,6 +83,9 @@ export function flipEffect(fx: Effect): Effect {
     case 'teslaZap':
     case 'infernoBeam':
       return { ...fx, x0: flipX(fx.x0), y0: flipY(fx.y0), x1: flipX(fx.x1), y1: flipY(fx.y1) };
+    // sem trocar o time, quem é team 1 de verdade veria o confete na cor errada
+    case 'towerDown':
+      return { ...fx, x: flipX(fx.x), y: flipY(fx.y), team: otherTeam(fx.team) };
     default:
       return { ...fx, x: flipX(fx.x), y: flipY(fx.y) };
   }

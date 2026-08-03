@@ -9,11 +9,14 @@ interface Option {
 }
 
 /**
+ * BACKUP — a IA original, mantida só para referência e para poder voltar
+ * atrás. A IA em uso está em `src/sim/ai/`.
+ *
  * Deliberately simple opponent: it answers whatever is walking at it, throws a
  * spell when your troops bunch up, and otherwise pushes a lane. Enough to make
  * the prototype feel like a real match.
  */
-export class Bot {
+export class BotV1 {
   private cd = 3;
 
   update(world: World, hand: Hand, dt: number) {

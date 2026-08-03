@@ -6,9 +6,16 @@ export interface DevSettings {
   gameSpeed: SpeedMultiplier;
   elixirSpeed: SpeedMultiplier;
   botEnabled: boolean;
+  /** Arquibancada com goblins e caveiras em volta da arena. */
+  crowdEnabled: boolean;
 }
 
-const DEFAULTS: DevSettings = { gameSpeed: 1, elixirSpeed: 1, botEnabled: true };
+const DEFAULTS: DevSettings = {
+  gameSpeed: 1,
+  elixirSpeed: 1,
+  botEnabled: true,
+  crowdEnabled: true,
+};
 
 function parseMultiplier(value: unknown): SpeedMultiplier | undefined {
   if (value === 2 || value === 3) return value;
@@ -25,6 +32,8 @@ export function loadDevSettings(): DevSettings {
       gameSpeed: parseMultiplier(parsed.gameSpeed) ?? DEFAULTS.gameSpeed,
       elixirSpeed: parseMultiplier(parsed.elixirSpeed) ?? DEFAULTS.elixirSpeed,
       botEnabled: typeof parsed.botEnabled === 'boolean' ? parsed.botEnabled : DEFAULTS.botEnabled,
+      crowdEnabled:
+        typeof parsed.crowdEnabled === 'boolean' ? parsed.crowdEnabled : DEFAULTS.crowdEnabled,
     };
   } catch {
     return { ...DEFAULTS };

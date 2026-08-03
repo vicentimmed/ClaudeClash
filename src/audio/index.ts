@@ -36,6 +36,7 @@ export type SfxName =
   | 'spellZap'
   | 'death'
   | 'towerDown'
+  | 'crowdCheer'
   | 'elixirFull'
   | 'win'
   | 'lose'
@@ -733,6 +734,33 @@ export class GameAudio {
         this.tone({ freq: 120, when: t, dur: 0.7, type: 'sine', gain: 0.5, slideTo: 40 });
         this.tone({ freq: 90, when: t + 0.1, dur: 0.6, type: 'triangle', gain: 0.3, slideTo: 35 });
         break;
+      case 'crowdCheer': {
+        // Plateia eufórica em três camadas: o rugido de fundo, as palmas e um
+        // "uhhh" de multidão desafinado por cima. Entra logo depois do
+        // estrondo da torre, como uma reação — não junto com ele.
+        const t0 = t + 0.12;
+        this.noise({ when: t0, dur: 2.4, gain: 0.5, filter: 500, sweepTo: 1500 });
+        this.noise({ when: t0 + 0.15, dur: 1.9, gain: 0.3, filter: 1800, sweepTo: 900 });
+        // palmas: grãos curtos de ruído rareando ao longo da cauda
+        for (let i = 0; i < 46; i++) {
+          const k = i / 46;
+          const when = t0 + 0.1 + k * 1.8 + Math.random() * 0.06;
+          this.noise({ when, dur: 0.035, gain: 0.14 * (1 - k * 0.7), filter: 4200 });
+        }
+        // vozes: quatro parciais desafinadas, entrando escalonadas
+        [262, 318, 392, 466].forEach((freq, i) => {
+          this.tone({
+            freq: freq * (0.97 + Math.random() * 0.06),
+            when: t0 + 0.14 + i * 0.05,
+            dur: 1.5,
+            type: 'triangle',
+            gain: 0.09,
+            attack: 0.28,
+            slideTo: freq * 0.86,
+          });
+        });
+        break;
+      }
       case 'elixirFull':
         this.tone({ freq: 880, when: t, dur: 0.1, type: 'sine', gain: 0.2 });
         this.tone({ freq: 1320, when: t + 0.08, dur: 0.14, type: 'sine', gain: 0.16 });

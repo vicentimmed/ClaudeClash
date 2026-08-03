@@ -2,7 +2,6 @@ import { Container, Graphics, Sprite, type Ticker } from 'pixi.js';
 import { GameAudio } from './audio';
 import {
   cardArtShape,
-  deckSelectableIds,
   loadBalance,
   loadSavedDeck,
   saveBalance,
@@ -15,7 +14,8 @@ import type { ServerMsg } from './net/protocol';
 import { Renderer } from './render/renderer';
 import { drawUnit } from './render/shapes';
 import { getCharacterIdleFrame, isCharacterLoaded } from './render/sprites/character-loader';
-import { Bot } from './sim/bot';
+import { Bot } from './sim/ai/bot';
+import { pickBotDeck } from './sim/ai/decks';
 import type { Balance, CardDef, Effect } from './sim/types';
 import { Hand, World } from './sim/world';
 import { AdminPanel } from './ui/admin';
@@ -66,6 +66,7 @@ export class Game {
   private gameSpeed: SpeedMultiplier = this.devSettings.gameSpeed;
   private elixirSpeed: SpeedMultiplier = this.devSettings.elixirSpeed;
   private botEnabled = this.devSettings.botEnabled;
+  private crowdEnabled = this.devSettings.crowdEnabled;
 
   private stage!: HTMLElement;
   private hint!: HTMLElement;
@@ -73,6 +74,8 @@ export class Game {
 
   async start() {
     this.stage = document.getElementById('stage')!;
+    // antes do init: o primeiro layout já sai com (ou sem) as arquibancadas
+    this.renderer.setCrowdEnabled(this.crowdEnabled);
     await this.renderer.init(this.stage);
 
     this.hint = document.createElement('div');
@@ -95,7 +98,13 @@ export class Game {
       onOpenAdmin: () => {
         if (this.mode === 'online') return;
         this.audio.play('uiTap');
-        this.admin.open(this.balance, this.gameSpeed, this.elixirSpeed, this.botEnabled);
+        this.admin.open(
+          this.balance,
+          this.gameSpeed,
+          this.elixirSpeed,
+          this.botEnabled,
+          this.crowdEnabled,
+        );
       },
       onToggleSound: () => this.toggleSound(),
       onEditDeck: () => {
@@ -116,6 +125,7 @@ export class Game {
       (gameSpeed) => this.setGameSpeed(gameSpeed),
       (elixirSpeed) => this.setElixirSpeed(elixirSpeed),
       (enabled) => this.setBotEnabled(enabled),
+      (enabled) => this.setCrowdEnabled(enabled),
     );
 
     this.deckBuilder = new DeckBuilder(
@@ -465,8 +475,11 @@ export class Game {
     this.world.elixirSpeedMul = this.elixirSpeed;
     this.localHand = new Hand(deck);
     this.hand = this.localHand;
-    this.botHand = new Hand(this.randomBotDeck());
-    this.bot = new Bot();
+    // O deck da CPU (um dos prontos ou um sorteado) define o plano de ataque
+    // dela pela partida inteira — por isso o Bot é recriado junto com a mão.
+    const loadout = pickBotDeck(this.balance);
+    this.botHand = new Hand(loadout.cards);
+    this.bot = new Bot(1, { winCondition: loadout.winCondition, cards: loadout.cards });
     this.stepSec = 1 / this.balance.global.tickRate;
     this.acc = 0;
     this.resultShown = false;
@@ -477,15 +490,6 @@ export class Game {
     this.ui.hideResult();
     this.ui.clearSelection();
     this.hint.style.display = 'none';
-  }
-
-  private randomBotDeck(): string[] {
-    const ids = deckSelectableIds(this.balance);
-    for (let i = ids.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [ids[i], ids[j]] = [ids[j], ids[i]];
-    }
-    return ids.slice(0, this.balance.deckSize);
   }
 
   private applyBalance(balance: Balance) {
@@ -525,11 +529,18 @@ export class Game {
     this.persistDevSettings();
   }
 
+  private setCrowdEnabled(enabled: boolean) {
+    this.crowdEnabled = enabled;
+    this.renderer.setCrowdEnabled(enabled);
+    this.persistDevSettings();
+  }
+
   private persistDevSettings() {
     saveDevSettings({
       gameSpeed: this.gameSpeed,
       elixirSpeed: this.elixirSpeed,
       botEnabled: this.botEnabled,
+      crowdEnabled: this.crowdEnabled,
     });
   }
 
@@ -768,6 +779,7 @@ export class Game {
 
   /** The renderer drains `effects`, so read them just before it does. */
   private playEffectSounds(effects: Effect[]) {
+    let cheered = false;
     for (const fx of effects) {
       switch (fx.type) {
         case 'deploy':
@@ -784,6 +796,11 @@ export class Game {
           break;
         case 'towerDown':
           this.audio.play('towerDown');
+          // duas torres caindo no mesmo frame não somam duas plateias
+          if (!cheered) {
+            cheered = true;
+            if (this.crowdEnabled) this.audio.play('crowdCheer');
+          }
           break;
         case 'spell':
           this.audio.play(

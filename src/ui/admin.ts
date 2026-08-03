@@ -54,6 +54,7 @@ export class AdminPanel {
   private speed = 1 as SpeedMultiplier;
   private elixirSpeed = 1 as SpeedMultiplier;
   private botEnabled = true;
+  private crowdEnabled = true;
   private speedBtns: HTMLButtonElement[] = [];
   private elixirSpeedBtns: HTMLButtonElement[] = [];
 
@@ -63,6 +64,7 @@ export class AdminPanel {
     private onSpeedChange: (speed: SpeedMultiplier) => void,
     private onElixirSpeedChange: (speed: SpeedMultiplier) => void,
     private onBotEnabledChange: (enabled: boolean) => void,
+    private onCrowdEnabledChange: (enabled: boolean) => void,
   ) {
     this.draft = structuredClone(balance);
     this.el = document.getElementById('admin')!;
@@ -98,11 +100,13 @@ export class AdminPanel {
     gameSpeed: SpeedMultiplier = 1,
     elixirSpeed: SpeedMultiplier = 1,
     botEnabled = true,
+    crowdEnabled = true,
   ) {
     this.draft = structuredClone(balance);
     this.speed = gameSpeed;
     this.elixirSpeed = elixirSpeed;
     this.botEnabled = botEnabled;
+    this.crowdEnabled = crowdEnabled;
     this.render();
     this.el.classList.add('show');
   }
@@ -116,6 +120,7 @@ export class AdminPanel {
   private render() {
     this.body.innerHTML = '';
     this.body.appendChild(this.testGroup());
+    this.body.appendChild(this.sceneGroup());
     this.body.appendChild(
       this.group('Partida', null, null, GLOBAL_FIELDS, this.draft.global as unknown as Record<string, number>),
     );
@@ -164,28 +169,58 @@ export class AdminPanel {
     box.appendChild(
       this.speedRow('Velocidade do elixir', this.elixirSpeed, (s) => this.setElixirSpeed(s), 'elixirSpeedBtns'),
     );
-    box.appendChild(this.botRow());
+    box.appendChild(
+      this.toggleRow('Inimigo (CPU)', 'Joga cartas', this.botEnabled, (on) => {
+        this.botEnabled = on;
+        this.onBotEnabledChange(on);
+      }),
+    );
     return box;
   }
 
-  private botRow(): HTMLElement {
+  /** Opções visuais da arena — não mexem em regra nem em balanceamento. */
+  private sceneGroup(): HTMLElement {
+    const box = document.createElement('div');
+    box.className = 'group';
+    const head = document.createElement('h3');
+    head.textContent = 'Cenário';
+    box.appendChild(head);
+
+    const note = document.createElement('p');
+    note.className = 'group-note';
+    note.textContent =
+      'Com a plateia ligada, a arena abre espaço para as arquibancadas nas laterais e fica um pouco mais estreita. Desligando, o campo volta a ocupar a tela inteira.';
+    box.appendChild(note);
+
+    box.appendChild(
+      this.toggleRow('Plateia', 'Goblins e caveiras', this.crowdEnabled, (on) => {
+        this.crowdEnabled = on;
+        this.onCrowdEnabledChange(on);
+      }),
+    );
+    return box;
+  }
+
+  private toggleRow(
+    labelText: string,
+    toggleText: string,
+    checked: boolean,
+    onChange: (on: boolean) => void,
+  ): HTMLElement {
     const row = document.createElement('div');
     row.className = 'speed-row';
     const label = document.createElement('span');
     label.className = 'speed-label';
-    label.textContent = 'Inimigo (CPU)';
+    label.textContent = labelText;
     row.appendChild(label);
 
     const toggle = document.createElement('label');
     toggle.className = 'dev-toggle';
     const input = document.createElement('input');
     input.type = 'checkbox';
-    input.checked = this.botEnabled;
-    input.addEventListener('change', () => {
-      this.botEnabled = input.checked;
-      this.onBotEnabledChange(input.checked);
-    });
-    toggle.append(input, document.createTextNode(' Joga cartas'));
+    input.checked = checked;
+    input.addEventListener('change', () => onChange(input.checked));
+    toggle.append(input, document.createTextNode(` ${toggleText}`));
     row.appendChild(toggle);
     return row;
   }
