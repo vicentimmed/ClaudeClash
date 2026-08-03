@@ -80,14 +80,28 @@ body {
 }
 
 .crown-dot {
-  width: 11px;
+  width: 13px;
   height: 11px;
-  border-radius: 3px;
-  background: #4a3a2c;
-  border: 1px solid #17110d;
+  display: grid;
+  place-items: center;
+  color: #4a3a2c;
+  line-height: 0;
+}
+.crown-dot svg {
+  display: block;
 }
 .crown-dot.on {
-  background: var(--gold);
+  color: var(--gold);
+  filter: drop-shadow(0 0 4px rgba(232, 196, 90, 0.7));
+  animation: crown-win 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+@keyframes crown-win {
+  0% {
+    transform: scale(0.4) rotate(-25deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
 }
 
 .timer {
@@ -210,6 +224,24 @@ body {
   gap: 2px;
   overflow: hidden;
   position: relative;
+  /* the flat per-card colour is set inline; this lifts it into a lit frame */
+  background-image: radial-gradient(
+    ellipse at 50% 32%,
+    rgba(255, 255, 255, 0.24),
+    rgba(255, 255, 255, 0) 62%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -8px 12px rgba(0, 0, 0, 0.3);
+}
+/* a sheen across the top third, so the card reads as a physical object */
+.card-face::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 42%;
+  background: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0));
+  pointer-events: none;
 }
 .next-slot .card-face {
   height: 44px;
@@ -266,6 +298,9 @@ body {
   left: 1px;
 }
 
+.card .card-face {
+  transition: transform 0.12s ease-out, filter 0.18s;
+}
 .card.locked .card-face {
   filter: grayscale(0.75) brightness(0.55);
   border-color: #6b5540;
@@ -277,6 +312,25 @@ body {
 }
 .card:active .card-face {
   transform: translateY(-3px);
+}
+/* Fires once, the moment enough elixir arrives — tells you what just unlocked
+   without you having to scan four cards. */
+.card.just-ready .card-face {
+  animation: card-ready 0.5s ease-out;
+}
+@keyframes card-ready {
+  0% {
+    box-shadow: 0 0 0 0 rgba(232, 196, 90, 0.9);
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    box-shadow: 0 0 12px 3px rgba(232, 196, 90, 0.75);
+    transform: translateY(-3px) scale(1.05);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 196, 90, 0);
+    transform: translateY(0) scale(1);
+  }
 }
 
 .elixir-row {
@@ -311,12 +365,19 @@ body {
   background: var(--wood-light);
   border-radius: 2px;
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 .pip i {
   display: block;
   height: 100%;
   width: 0;
   background: var(--elixir);
+  /* highlight along the top edge so the fill looks like liquid, not a block */
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.4),
+    rgba(255, 255, 255, 0.05) 45%,
+    rgba(0, 0, 0, 0.18)
+  );
 }
 .elixir-row.double .elixir-count,
 .elixir-row.double .pip i {
@@ -325,6 +386,25 @@ body {
 .elixir-row.triple .elixir-count,
 .elixir-row.triple .pip i {
   background: #ff6a3d;
+}
+/* the bar itself breathes once the elixir doubles, in time with the music */
+.elixir-row.double .elixir-count,
+.elixir-row.triple .elixir-count {
+  animation: elixir-throb 0.83s ease-in-out infinite;
+}
+.elixir-row.triple .elixir-count {
+  animation-duration: 0.59s;
+}
+@keyframes elixir-throb {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(224, 75, 176, 0);
+  }
+  50% {
+    transform: scale(1.14);
+    box-shadow: 0 0 10px rgba(224, 75, 176, 0.75);
+  }
 }
 
 .elixir-mode {
@@ -341,9 +421,23 @@ body {
 }
 .elixir-mode.show {
   opacity: 1;
+  /* punches in on the downbeat instead of fading up */
+  animation: elixir-mode-in 0.45s cubic-bezier(0.2, 1.5, 0.4, 1);
 }
 .elixir-mode.triple {
   color: #ff6a3d;
+}
+@keyframes elixir-mode-in {
+  0% {
+    transform: scale(0.5);
+    letter-spacing: 0.4em;
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    letter-spacing: 0.04em;
+    opacity: 1;
+  }
 }
 
 /* -------------------------------------------------------------- drag ghost */
@@ -382,16 +476,62 @@ body {
 }
 #overlay.show {
   display: grid;
+  animation: overlay-in 0.3s ease-out;
 }
 #overlay h1 {
   font-size: 40px;
   margin: 0 0 4px;
   font-weight: 800;
 }
+#overlay.show h1 {
+  animation: result-title 0.55s cubic-bezier(0.2, 1.5, 0.35, 1) 0.1s backwards;
+}
 #overlay p {
   color: var(--muted);
   margin: 0 0 22px;
   font-size: 15px;
+}
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes result-title {
+  0% {
+    transform: scale(0.35) rotate(-8deg);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1) rotate(0);
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------- confetti */
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti i {
+  position: absolute;
+  top: -14px;
+  width: 7px;
+  height: 11px;
+  border-radius: 1px;
+  animation: confetti-fall linear forwards;
+}
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(0) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(105vh) rotate(720deg);
+    opacity: 0.15;
+  }
 }
 
 .big-btn {
@@ -409,6 +549,57 @@ body {
 .big-btn:active {
   transform: translateY(2px);
   border-bottom-width: 2px;
+}
+
+/* ------------------------------------------------------------- countdown */
+
+.countdown-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: rgba(10, 7, 5, 0.35);
+  z-index: 15;
+  pointer-events: none;
+}
+.countdown-overlay.show {
+  display: grid;
+}
+.countdown-number {
+  font-size: 130px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--gold);
+  text-shadow:
+    0 0 30px rgba(232, 196, 90, 0.65),
+    0 6px 0 #a8862e,
+    0 10px 18px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+}
+.countdown-number.pop {
+  animation: countdown-pop 1s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+}
+@keyframes countdown-pop {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  18% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  32% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  78% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
 }
 
 .hint {
@@ -452,29 +643,53 @@ body {
   place-items: center;
   padding: 24px;
   text-align: center;
+  overflow: hidden;
 }
 #home.show {
   display: grid;
+  animation: screen-in 0.26s ease-out;
+}
+.home-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.home-bg canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .home-inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
   width: 100%;
   max-width: 300px;
+  padding: 22px 20px 26px;
+  background: rgba(20, 15, 10, 0.4);
+  border: 1px solid rgba(255, 220, 160, 0.14);
+  border-radius: 18px;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
 }
 .home-title {
-  font-size: 34px;
+  font-size: 36px;
   font-weight: 800;
   margin: 0;
   color: var(--gold);
   letter-spacing: 0.01em;
+  text-shadow:
+    0 2px 0 #4a2c10,
+    0 6px 18px rgba(0, 0, 0, 0.55);
 }
 .home-sub {
   margin: 0 0 14px;
   font-size: 14px;
-  color: var(--muted);
+  color: var(--parchment);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 .home-btn {
   width: 100%;
@@ -554,6 +769,16 @@ body {
 }
 #deck.show {
   display: flex;
+  animation: screen-in 0.26s ease-out;
+}
+
+/* Screens are stacked absolutely, so they slide up into place rather than
+   hard-cutting between home, deck builder and the match. */
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
 }
 
 .deck-head {

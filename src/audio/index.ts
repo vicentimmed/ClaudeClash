@@ -14,6 +14,17 @@ const STORAGE_KEY = 'claudeclash.audio.v1';
 /** Arena Anthem (v3) na partida; Card Lounge no deck builder. */
 export type MusicTrack = 'battle' | 'deck';
 
+/**
+ * Quanto a partida está apertada. 0 = normal, 1 = elixir 2x, 2 = elixir 3x /
+ * prorrogação. Não troca de música: mantém a mesma harmonia e melodia e vai
+ * acelerando o andamento e empilhando camadas, para a virada soar como parte
+ * do arranjo em vez de um corte.
+ */
+export type MusicIntensity = 0 | 1 | 2;
+
+/** Multiplicador de BPM por nível — 136 → 152 → 164. */
+const INTENSITY_BPM = [1, 1.12, 1.21] as const;
+
 export type SfxName =
   | 'select'
   | 'deploy'
@@ -29,6 +40,9 @@ export type SfxName =
   | 'win'
   | 'lose'
   | 'countdown'
+  | 'matchCountdown3'
+  | 'matchCountdown2'
+  | 'matchCountdown1'
   | 'uiTap';
 
 interface Prefs {
@@ -54,6 +68,10 @@ export class GameAudio {
   private playingMusic = false;
   private track: MusicTrack = 'deck';
   private pendingStart = false;
+  /** Nível em vigor no arranjo — só muda no início de um compasso. */
+  private intensity: MusicIntensity = 0;
+  /** Nível pedido pelo jogo, aguardando a próxima barra para entrar. */
+  private wantedIntensity: MusicIntensity = 0;
 
   constructor() {
     try {
@@ -178,22 +196,79 @@ export class GameAudio {
     }
   }
 
+  // --------------------------------------------------------------- intensity
+
+  /**
+   * Sobe (ou desce) a tensão da trilha de batalha. A mudança fica pendente e só
+   * entra na próxima barra, para cair no downbeat; um riser preenche exatamente
+   * o intervalo até lá, avisando o jogador antes da virada.
+   */
+  setMusicIntensity(level: MusicIntensity) {
+    if (level === this.wantedIntensity) return;
+    const rising = level > this.wantedIntensity;
+    this.wantedIntensity = level;
+
+    // fora da batalha (ou sem áudio ainda) não há o que anunciar: aplica direto
+    if (!this.ctx || !this.playingMusic || this.track !== 'battle') {
+      this.intensity = level;
+      return;
+    }
+    if (rising) this.scheduleRiser();
+  }
+
+  get musicIntensity(): MusicIntensity {
+    return this.intensity;
+  }
+
+  /** Ruído + tom subindo que ocupa o tempo restante até a próxima barra. */
+  private scheduleRiser() {
+    const ctx = this.ctx;
+    if (!ctx || !this.prefs.music) return;
+    const stepsToBar = (8 - (this.step % 8)) % 8 || 8;
+    const landsAt = this.nextNoteTime + (stepsToBar - 1) * this.stepDur;
+    const dur = landsAt - ctx.currentTime;
+    if (dur <= 0.05) return;
+
+    this.noise({
+      when: ctx.currentTime,
+      dur,
+      gain: 0.09,
+      filter: 300,
+      sweepTo: 6000,
+      bus: this.musicBus,
+    });
+    this.tone({
+      freq: note(-12),
+      when: ctx.currentTime,
+      dur,
+      type: 'sawtooth',
+      gain: 0.07,
+      slideTo: note(12),
+      attack: dur * 0.7,
+      bus: this.musicBus,
+    });
+    // crash marcando o downbeat da virada
+    this.noise({ when: landsAt, dur: 0.5, gain: 0.16, filter: 7000, sweepTo: 1200, bus: this.musicBus });
+  }
+
   /** Classic Web Audio lookahead scheduler: queue anything due in the next 120 ms. */
   private scheduleAhead() {
     const ctx = this.ctx;
     if (!ctx) return;
-    const stepDur = this.stepDur;
     const stepsPerLoop = this.stepsPerLoop;
     while (this.nextNoteTime < ctx.currentTime + 0.12) {
+      // a virada de intensidade sempre cai no primeiro tempo de um compasso
+      if (this.step % 8 === 0) this.intensity = this.wantedIntensity;
       if (this.track === 'deck') this.scheduleDeckStep(this.step, this.nextNoteTime);
       else this.scheduleBattleStep(this.step, this.nextNoteTime);
-      this.nextNoteTime += stepDur;
+      this.nextNoteTime += this.stepDur;
       this.step = (this.step + 1) % stepsPerLoop;
     }
   }
 
   private get stepDur() {
-    return this.track === 'deck' ? 60 / MUSIC_DECK.bpm / 2 : 60 / MUSIC_V3_BACKUP.bpm / 2;
+    if (this.track === 'deck') return 60 / MUSIC_DECK.bpm / 2;
+    return 60 / (MUSIC_V3_BACKUP.bpm * INTENSITY_BPM[this.intensity]) / 2;
   }
 
   private get stepsPerLoop() {
@@ -537,6 +612,74 @@ export class GameAudio {
         });
       }
     }
+
+    // ---- camadas de tensão (elixir 2x / 3x) --------------------------
+    // A harmonia e a melodia não mudam; o que entra aqui é pressão rítmica.
+    if (this.intensity >= 1) {
+      // bumbo nos tempos que antes ficavam vazios — pulso constante
+      if (beat === 2 || beat === 6) {
+        this.tone({
+          freq: 88,
+          when,
+          dur: 0.09,
+          type: 'sine',
+          gain: 0.28,
+          slideTo: 40,
+          bus: this.musicBus,
+        });
+      }
+      // baixo preenche os buracos do padrão de galope
+      if (bassOff === null) {
+        this.tone({
+          freq: note(chord.root - 12),
+          when,
+          dur: 0.09,
+          type: 'triangle',
+          gain: 0.16,
+          bus: this.musicBus,
+        });
+      }
+      // trêmolo na quinta: é daqui que vem a sensação de aperto
+      this.tone({
+        freq: note(chord.root + 7),
+        when,
+        dur: this.stepDur * 1.1,
+        type: 'sawtooth',
+        gain: beat % 2 === 0 ? 0.05 : 0.028,
+        bus: this.musicBus,
+      });
+      // chimbal em todas as semicolcheias
+      this.noise({ when, dur: 0.02, gain: 0.045, filter: 9000, bus: this.musicBus });
+    }
+
+    if (this.intensity >= 2) {
+      // pedal na dominante (E) que nunca resolve
+      if (beat === 0 || beat === 3 || beat === 6) {
+        this.tone({
+          freq: note(7),
+          when,
+          dur: 0.12,
+          type: 'square',
+          gain: 0.06,
+          bus: this.musicBus,
+        });
+      }
+      // tons graves sincopados
+      if (beat === 3 || beat === 7) {
+        this.noise({ when, dur: 0.08, gain: 0.13, filter: 420, sweepTo: 150, bus: this.musicBus });
+      }
+      // melodia dobrada uma oitava acima
+      if (mel !== null) {
+        this.tone({
+          freq: note(mel + 12),
+          when,
+          dur: 0.14,
+          type: 'square',
+          gain: 0.065,
+          bus: this.musicBus,
+        });
+      }
+    }
   }
 
   // ---------------------------------------------------------------------- sfx
@@ -596,6 +739,19 @@ export class GameAudio {
         break;
       case 'countdown':
         this.tone({ freq: 740, when: t, dur: 0.12, type: 'square', gain: 0.22 });
+        break;
+      case 'matchCountdown3':
+        this.tone({ freq: note(0), when: t, dur: 0.2, type: 'square', gain: 0.26 });
+        this.tone({ freq: note(0) * 2, when: t, dur: 0.16, type: 'sine', gain: 0.12 });
+        break;
+      case 'matchCountdown2':
+        this.tone({ freq: note(3), when: t, dur: 0.2, type: 'square', gain: 0.28 });
+        this.tone({ freq: note(3) * 2, when: t, dur: 0.16, type: 'sine', gain: 0.13 });
+        break;
+      case 'matchCountdown1':
+        this.tone({ freq: note(7), when: t, dur: 0.24, type: 'square', gain: 0.3 });
+        this.tone({ freq: note(7) * 2, when: t, dur: 0.2, type: 'sine', gain: 0.15 });
+        this.tone({ freq: note(19), when: t + 0.05, dur: 0.35, type: 'triangle', gain: 0.22 });
         break;
       case 'win':
         [0, 4, 7, 12].forEach((semi, i) => {

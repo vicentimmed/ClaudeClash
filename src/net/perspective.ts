@@ -13,7 +13,7 @@
  */
 
 import { ARENA } from '../sim/arena';
-import type { Effect, Entity, PendingSpell, Projectile, RageZone, Team } from '../sim/types';
+import type { Effect, Entity, PendingSpell, Projectile, RageZone, Side, Team } from '../sim/types';
 import type { NetWorldSnapshot } from './protocol';
 
 export const flipX = (x: number): number => ARENA.width - x;
@@ -25,12 +25,15 @@ export function flipPoint(x: number, y: number): { x: number; y: number } {
 }
 
 const otherTeam = (team: Team): Team => (team === 0 ? 1 : 0);
+const otherSide = (side?: Side): Side | undefined =>
+  side === 'left' ? 'right' : side === 'right' ? 'left' : side;
 const swap = <T>(pair: [T, T]): [T, T] => [pair[1], pair[0]];
 
 function flipEntity(e: Entity): Entity {
   const out: Entity = {
     ...e,
     team: otherTeam(e.team),
+    side: otherSide(e.side),
     x: flipX(e.x),
     y: flipY(e.y),
     px: flipX(e.px),

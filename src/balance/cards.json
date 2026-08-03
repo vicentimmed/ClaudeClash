@@ -99,7 +99,7 @@
       "stunSec": 0,
       "towerDamageFactor": 1,
       "firstAttackDelay": 0.4,
-      "visual": { "shape": "goblins", "body": "#78d048", "accent": "#6b4226", "scale": 1.22 }
+      "visual": { "shape": "goblins", "body": "#78d048", "accent": "#6b4226", "scale": 1.0 }
     },
     "skeletons": {
       "name": "Esqueletos",

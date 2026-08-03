@@ -6,18 +6,17 @@ import { getCharacterSpriteSet } from './sprites/character-loader';
 import { resolveAnimState } from './sprites/resolve-anim-state';
 import { SpriteActor } from './sprites/sprite-actor';
 import { TEAM_COLOR, drawBalloonBombDrop, drawInfernoBeam, drawLightningBolt, drawRagePuddle, drawTeslaTrapdoor, drawTower, drawUnit, hexToNum, shade, towerMetrics } from './shapes';
+import { drawDeployZone, drawTerrain, drawVignette, drawWaterFx } from './arena-art';
 
-const GRASS = 0x6aa834;
-const GRASS_ALT = 0x74b23a;
-const PATH = 0xc9a86c;
-const PATH_EDGE = 0xb08e56;
-const RIVER = 0x2f96c9;
-const BRIDGE = 0xa5764f;
+/**
+ * Gameplay draw scale — card art keeps balance `visual.scale`; troops can read
+ * larger in the arena. At 18 tiles across on a phone a tile is only ~24 px, so
+ * everything gets a flat bump on top of its per-card tuning.
+ */
+const TROOP_READABILITY_BOOST = 1.2;
 
-/** Gameplay draw scale — card art keeps balance `visual.scale`; troops can read larger in the arena. */
-function gameplayDrawScale(cardId: string, scale: number): number {
-  if (cardId === 'goblins') return scale * 1.18;
-  return scale;
+function gameplayDrawScale(_cardId: string, scale: number): number {
+  return scale * TROOP_READABILITY_BOOST;
 }
 
 const HP_FONT = {
@@ -35,6 +34,30 @@ interface Particle {
   max: number;
   grow: number;
   spin: number;
+  /** debris cools toward this colour as it dies, instead of just fading out */
+  fadeTo?: number;
+  /** drag applied to debris velocity, so sparks slow down instead of flying flat */
+  drag?: number;
+  /** pinned in place — used by projectile trail dots, which only shrink */
+  still?: boolean;
+}
+
+/** Scorch marks left on the ground; they outlive the blast that made them. */
+interface Decal {
+  g: Graphics;
+  life: number;
+  max: number;
+}
+
+type BurstShape = 'chip' | 'spark' | 'puff';
+
+/** Straight RGB blend — good enough for debris cooling from ember to ash. */
+function lerpColor(from: number, to: number, t: number): number {
+  const k = Math.max(0, Math.min(1, t));
+  const r = ((from >> 16) & 255) + (((to >> 16) & 255) - ((from >> 16) & 255)) * k;
+  const g = ((from >> 8) & 255) + (((to >> 8) & 255) - ((from >> 8) & 255)) * k;
+  const b = (from & 255) + ((to & 255) - (from & 255)) * k;
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
 }
 
 interface BarGeom {
@@ -50,11 +73,24 @@ class EntityView {
   /** Tesla only: hatch drawn on the ground while retracted */
   trapdoor = new Graphics();
   bob = new Container();
+  /**
+   * Dark copy of `body`, drawn a touch larger behind it so troops keep a rim
+   * against the grass. It shares `body`'s GraphicsContext, so it costs a draw
+   * call but never rebuilds geometry — which matters, since several cards
+   * redraw their body every frame.
+   */
+  outline = new Graphics();
   body = new Graphics();
   zapLine = new Graphics();
   infernoLine = new Graphics();
   bombFx = new Graphics();
   spinFx = new Graphics();
+  /**
+   * Weapon FX that live inside `bob` (so they follow the facing flip and the
+   * recoil tilt) but must stay out of `body` — anything drawn there also gets
+   * a dark, 6%-offset copy from `outline`, which turns sparks into mud specks.
+   */
+  muzzleFx = new Graphics();
   spawnRing = new Graphics();
   hpBg = new Graphics();
   hpFg = new Graphics();
@@ -67,13 +103,30 @@ class EntityView {
   lastHpValue = -1;
   lastHidden = false;
   lastTowerActive = false;
+  /** 0..1 fade for troop HP bars — they only appear once the unit is hurt. */
+  hpReveal = 0;
   dying = 0;
   /** SpriteCook animated sprite (troops with visual.spriteCharacter) */
   spriteActor: SpriteActor | null = null;
 
   constructor() {
     this.root.addChild(this.shadow, this.trapdoor, this.spawnRing, this.spinFx, this.bob, this.zapLine, this.infernoLine, this.bombFx, this.hpBg, this.hpFg);
-    this.bob.addChild(this.body);
+    this.bob.addChild(this.outline, this.body, this.muzzleFx);
+    this.outline.tint = 0x1b1208;
+    this.outline.alpha = 0.55;
+    this.outline.visible = false;
+  }
+
+  /** Links the outline to the body's geometry and centres the 6% expansion. */
+  syncOutline(bodyHeight: number) {
+    if (this.outline.context !== this.body.context) {
+      this.outline.context = this.body.context;
+    }
+    const grow = 1.06;
+    this.outline.scale.set(grow);
+    // without this the extra height would all pile onto the head
+    this.outline.position.y = bodyHeight * (grow - 1) * 0.5;
+    this.outline.visible = this.body.visible;
   }
 }
 
@@ -84,6 +137,7 @@ export class Renderer {
 
   private root = new Container();
   private arenaG = new Graphics();
+  private waterFxG = new Graphics();
   private groundFxLayer = new Container();
   private ragePuddleViews = new Map<number, Graphics>();
   private zoneG = new Graphics();
@@ -92,6 +146,11 @@ export class Renderer {
   private spellLayer = new Container();
   private projLayer = new Container();
   private fxLayer = new Container();
+  private vignetteG = new Graphics();
+  private tensionG = new Graphics();
+
+  /** 0 = normal, 1 = elixir 2x, 2 = elixir 3x — warms the arena rim. */
+  tension: 0 | 1 | 2 = 0;
 
   private views = new Map<number, EntityView>();
   private projViews = new Map<number, Graphics>();
@@ -100,8 +159,18 @@ export class Renderer {
     { holder: Container; shadow: Graphics; icon: Graphics; drawn: boolean }
   >();
   private particles: Particle[] = [];
+  private decals: Decal[] = [];
+  private flashG = new Graphics();
+  private flash = 0;
+  /** seconds of trail left to emit per projectile, keyed by projectile id */
+  private trailClock = new Map<number, number>();
 
   private shake = 0;
+  /**
+   * Frames the game should freeze for after a heavy impact. `Game` reads and
+   * clears this — the pause has to happen in the simulation, not the draw.
+   */
+  hitStop = 0;
   private host!: HTMLElement;
   /** 'half' = own side (troops), 'all' = whole board (spells) */
   zoneMode: 'none' | 'half' | 'all' = 'none';
@@ -121,6 +190,7 @@ export class Renderer {
     this.entityLayer.sortableChildren = true;
     this.root.addChild(
       this.arenaG,
+      this.waterFxG,
       this.groundFxLayer,
       this.zoneG,
       this.previewG,
@@ -128,6 +198,9 @@ export class Renderer {
       this.spellLayer,
       this.projLayer,
       this.fxLayer,
+      this.vignetteG,
+      this.tensionG,
+      this.flashG,
     );
     this.app.stage.addChild(this.root);
     this.layout();
@@ -140,8 +213,17 @@ export class Renderer {
     if (w <= 0 || h <= 0) return;
     this.tile = w / ARENA.width;
     this.squash = Math.min(1, Math.max(0.5, h / (ARENA.height * this.tile)));
-    this.root.position.set(0, (h - ARENA.height * this.tile * this.squash) / 2);
-    this.drawArena();
+    // Pivot at the board centre so the shake can roll the camera without the
+    // whole arena swinging off a corner.
+    this.root.pivot.set(w / 2, (ARENA.height * this.tile * this.squash) / 2);
+    this.applyCamera(0, 0, 0);
+    drawTerrain(this.arenaG, this.tile, this.squash);
+    drawVignette(
+      this.vignetteG,
+      ARENA.width * this.tile,
+      ARENA.height * this.tile * this.squash,
+      this.tile,
+    );
     for (const view of this.views.values()) view.lastHpRatio = -1;
     this.rebuildBodies();
   }
@@ -160,91 +242,68 @@ export class Renderer {
     return [x * this.tile, y * this.tile * this.squash];
   }
 
-  /** Convert a pointer position (relative to the canvas) into tile coordinates. */
+  /**
+   * Convert a pointer position (relative to the canvas) into tile coordinates.
+   * Deliberately ignores the shake offset — input must not wobble with the
+   * camera.
+   */
   fromScreen(px: number, py: number): [number, number] {
-    return [px / this.tile, (py - this.root.position.y) / (this.tile * this.squash)];
-  }
-
-  private drawArena() {
-    const g = this.arenaG;
-    const T = this.tile;
-    const ty = (v: number) => v * T * this.squash;
-    const W = ARENA.width * T;
-    const H = ty(ARENA.height);
-
-    g.clear();
-    g.rect(0, 0, W, H).fill(GRASS);
-
-    for (let cy = 0; cy < ARENA.height / 2; cy++) {
-      for (let cx = 0; cx < ARENA.width / 2; cx++) {
-        if ((cx + cy) % 2 === 0) continue;
-        g.rect(cx * 2 * T, ty(cy * 2), 2 * T, ty(2)).fill(GRASS_ALT);
-      }
-    }
-
-    const laneW = 2.6 * T;
-    const lx = ARENA.bridgeLeftX * T - laneW / 2;
-    const rx = ARENA.bridgeRightX * T - laneW / 2;
-    const spanW = (ARENA.bridgeRightX - ARENA.bridgeLeftX) * T + laneW;
-    g.rect(lx - 2, ty(3), laneW + 4, ty(26)).fill(PATH_EDGE);
-    g.rect(rx - 2, ty(3), laneW + 4, ty(26)).fill(PATH_EDGE);
-    g.rect(lx - 2, ty(3), spanW + 4, ty(2.2)).fill(PATH_EDGE);
-    g.rect(lx - 2, ty(26.8), spanW + 4, ty(2.2)).fill(PATH_EDGE);
-    g.rect(lx, ty(3.1), laneW, ty(25.8)).fill(PATH);
-    g.rect(rx, ty(3.1), laneW, ty(25.8)).fill(PATH);
-    g.rect(lx, ty(3.1), spanW, ty(2)).fill(PATH);
-    g.rect(lx, ty(26.9), spanW, ty(2)).fill(PATH);
-
-    g.rect(0, ty(ARENA.riverTop), W, ty(ARENA.riverBottom - ARENA.riverTop)).fill(RIVER);
-    g.rect(0, ty(ARENA.riverTop), W, ty(0.22)).fill(0x5ec2e8);
-    g.rect(0, ty(ARENA.riverBottom - 0.22), W, ty(0.22)).fill(0x2477a3);
-    for (let i = 0; i < 7; i++) {
-      const wx = (i * 2.7 + 0.6) * T;
-      g.ellipse(wx, ty(ARENA.riverTop + 0.45), T * 0.5, ty(0.1)).fill({
-        color: 0xffffff,
-        alpha: 0.22,
-      });
-    }
-
-    for (const bx of [ARENA.bridgeLeftX, ARENA.bridgeRightX]) {
-      const bw = ARENA.bridgeHalfWidth * 2 * T;
-      const x0 = bx * T - bw / 2;
-      g.roundRect(x0, ty(ARENA.riverTop - 0.35), bw, ty(1.9), 4).fill(BRIDGE);
-      for (let i = 0; i < 5; i++) {
-        g.rect(x0, ty(ARENA.riverTop - 0.2 + i * 0.34), bw, ty(0.1)).fill(0x8a5f3d);
-      }
-      g.rect(x0, ty(ARENA.riverTop - 0.35), bw, ty(0.12)).fill(0xc0906a);
-    }
-
-    g.rect(0, 0, W, H).stroke({ width: 3, color: 0x3f5a1f, alignment: 1 });
+    const boardH = ARENA.height * this.tile * this.squash;
+    const topY = (this.host.clientHeight - boardH) / 2;
+    return [px / this.tile, (py - topY) / (this.tile * this.squash)];
   }
 
   private drawZone(world: World) {
     const g = this.zoneG;
-    g.clear();
-    if (this.zoneMode === 'none') return;
-    const T = this.tile;
-    const ty = (v: number) => v * T * this.squash;
-    const W = ARENA.width * T;
+    if (this.zoneMode === 'none') {
+      g.clear();
+      return;
+    }
 
     // spells can be thrown anywhere
     if (this.zoneMode === 'all') {
-      g.rect(0, 0, W, ty(ARENA.height)).fill({ color: 0xffd98a, alpha: 0.12 });
+      drawDeployZone(
+        g,
+        this.tile,
+        this.squash,
+        [{ x0: 0, x1: ARENA.width, y0: 0, y1: ARENA.height }],
+        world.time,
+        0xffd98a,
+      );
       return;
     }
 
     const top = ARENA.riverBottom + 0.3;
-    g.rect(0, ty(top), W, ty(ARENA.height - top)).fill({ color: 0xffffff, alpha: 0.19 });
-
+    const bands: { x0: number; x1: number; y0: number; y1: number }[] = [
+      { x0: 0, x1: ARENA.width, y0: top, y1: ARENA.height },
+    ];
+    let anyUnlocked = false;
     for (const side of ['left', 'right'] as const) {
       const stillUp = world.entities.some(
         (e) => e.kind === 'tower' && e.team === 1 && e.side === side && e.hp > 0,
       );
       if (stillUp) continue;
-      const x0 = side === 'left' ? 0 : W / 2;
-      g.rect(x0, ty(3.5), W / 2, ty(top - 3.5)).fill({ color: 0xffffff, alpha: 0.19 });
+      anyUnlocked = true;
+      bands.push({
+        x0: side === 'left' ? 0 : ARENA.width / 2,
+        x1: side === 'left' ? ARENA.width / 2 : ARENA.width,
+        y0: 3.5,
+        y1: top,
+      });
     }
-    g.rect(0, ty(top), W, 2).fill({ color: 0xffffff, alpha: 0.45 });
+    // only worth showing once a lane is actually open into the enemy half
+    const king = anyUnlocked ? world.enemyKingGuard(0) : undefined;
+    const blocked = king
+      ? [
+          {
+            x0: king.x - ARENA.kingDeployBlockHalfW,
+            x1: king.x + ARENA.kingDeployBlockHalfW,
+            y0: king.y - ARENA.kingDeployBlockHalfH,
+            y1: king.y + ARENA.kingDeployBlockHalfH,
+          },
+        ]
+      : undefined;
+    drawDeployZone(g, this.tile, this.squash, bands, world.time, 0xffffff, blocked);
   }
 
   /** Persistent Rage liquid stains on the arena floor. */
@@ -277,6 +336,34 @@ export class Renderer {
       if (alive.has(id)) continue;
       g.destroy();
       this.ragePuddleViews.delete(id);
+    }
+  }
+
+  /**
+   * Warm rim that breathes once the elixir doubles — the visual half of the
+   * music's intensity change, so both land at the same moment.
+   */
+  private drawTension(time: number) {
+    const g = this.tensionG;
+    g.clear();
+    if (this.tension === 0) return;
+
+    const w = ARENA.width * this.tile;
+    const h = ARENA.height * this.tile * this.squash;
+    const color = this.tension >= 2 ? 0xff6a3d : 0xe04bb0;
+    const beats = this.tension >= 2 ? 3.4 : 2.4;
+    const pulse = 0.5 + 0.5 * Math.sin(time * beats);
+    const rings = 10;
+    const depth = this.tile * 2.2;
+    for (let i = 0; i < rings; i++) {
+      const t = i / rings;
+      const inset = (depth * i) / rings;
+      g.roundRect(inset, inset, w - inset * 2, h - inset * 2, this.tile * 0.4).stroke({
+        width: depth / rings + 1.2,
+        color,
+        alpha: (0.08 + pulse * 0.07) * (1 - t) ** 1.4 * (this.tension >= 2 ? 1.5 : 1),
+        alignment: 0,
+      });
     }
   }
 
@@ -329,26 +416,25 @@ export class Renderer {
       );
       if (e.towerKind === 'king') view.lastTowerActive = e.active;
       const metrics = towerMetrics(e.towerKind!, T, this.squash);
-      const barW = metrics.w;
+      // slimmed down: the old bar was the loudest thing on the board
+      const barW = metrics.w * 0.78;
       view.hpBg.clear();
       view.hpFg.clear();
       if (e.hp > 0) {
-        const bh = Math.max(7, T * 0.34);
+        const bh = Math.max(5, T * 0.24);
         // never let the bar float off the top of the board
         const baseScreenY = e.y * T * this.squash;
         const by = Math.max(metrics.topY - bh - T * 0.12, 2 - baseScreenY);
         view.hpBg.roundRect(-barW / 2, by, barW, bh, 3).fill(0x241c14);
-        view.hpBg.roundRect(-barW / 2, by, barW, bh, 3).stroke({ width: 1.5, color: 0x0f0b07 });
-        view.hpFgGeom = { x: -barW / 2 + 1.5, y: by + 1.5, w: barW - 3, h: bh - 3 };
+        view.hpBg.roundRect(-barW / 2, by, barW, bh, 3).stroke({ width: 1.2, color: 0x0f0b07 });
+        view.hpFgGeom = { x: -barW / 2 + 1.2, y: by + 1.2, w: barW - 2.4, h: bh - 2.4 };
+        const fontSize = Math.max(8, T * 0.33);
         if (!view.hpText) {
-          view.hpText = new Text({
-            text: '',
-            style: { ...HP_FONT, fontSize: Math.max(10, T * 0.52) },
-          });
+          view.hpText = new Text({ text: '', style: { ...HP_FONT, fontSize } });
           view.hpText.anchor.set(0.5);
           view.root.addChild(view.hpText);
         }
-        view.hpText.style.fontSize = Math.max(10, T * 0.52);
+        view.hpText.style.fontSize = fontSize;
         view.hpText.position.set(0, by + bh / 2);
         view.hpText.visible = true;
       } else if (view.hpText) {
@@ -357,12 +443,16 @@ export class Renderer {
     } else {
       const card = world.b.cards[e.cardId];
       const h = gameplayDrawScale(e.cardId, card.visual.scale) * T;
+      // flyers sit above their shadow, so it reads smaller and softer
+      const airborne = e.flying || card.visual.shape === 'witch';
+      const shSize = airborne ? 0.78 : 1;
+      const shAlpha = airborne ? 0.16 : 0.28;
       view.shadow
-        .ellipse(0, 0, e.radius * T * 1.05, e.radius * T * 0.52)
-        .fill({ color: 0x000000, alpha: 0.28 });
+        .ellipse(0, 0, e.radius * T * 1.05 * shSize, e.radius * T * 0.52 * shSize)
+        .fill({ color: 0x000000, alpha: shAlpha });
       view.shadow
-        .ellipse(0, 0, e.radius * T * 1.15, e.radius * T * 0.6)
-        .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: 0.85 });
+        .ellipse(0, 0, e.radius * T * 1.15 * shSize, e.radius * T * 0.6 * shSize)
+        .stroke({ width: 2, color: TEAM_COLOR[e.team], alpha: airborne ? 0.6 : 0.85 });
 
       const spriteCharId = card.visual.spriteCharacter;
       const spriteSet = spriteCharId ? getCharacterSpriteSet(spriteCharId) : undefined;
@@ -396,12 +486,14 @@ export class Renderer {
         );
       }
 
+      view.syncOutline(h);
+
       view.lastHidden = e.cardId === 'tesla' && !!e.hidden;
       if (e.cardId === 'tesla') {
         this.syncTeslaTrapdoor(view, e, world, h);
       }
       // flyers and the Witch hover above their shadow
-      view.flyLift = e.flying || card.visual.shape === 'witch' ? h * 0.55 : 0;
+      view.flyLift = airborne ? h * 0.55 : 0;
 
       const barW = Math.max(14, e.radius * T * 2.1);
       const bh = Math.max(4, T * 0.2);
@@ -456,6 +548,8 @@ export class Renderer {
 
   draw(world: World, alpha: number, dt: number) {
     this.syncViews(world);
+    drawWaterFx(this.waterFxG, this.tile, this.squash, world.time);
+    this.drawTension(world.time);
     this.drawZone(world);
     this.drawRageGround(world);
     this.drawDeployPreview();
@@ -510,6 +604,19 @@ export class Renderer {
           view.lastHpValue = shown;
           view.hpText.text = String(shown);
         }
+      }
+
+      // Troops keep their bar hidden until something actually hurts them —
+      // a board full of untouched full bars is pure noise. Towers always show.
+      if (e.kind !== 'tower') {
+        const target = ratio < 0.999 ? 1 : 0;
+        const rate = target > view.hpReveal ? 9 : 2.6;
+        view.hpReveal += (target - view.hpReveal) * Math.min(1, dt * rate);
+        const a = view.hpReveal < 0.01 ? 0 : view.hpReveal;
+        view.hpBg.alpha = a;
+        view.hpFg.alpha = a;
+        view.hpBg.visible = a > 0;
+        view.hpFg.visible = a > 0;
       }
 
       if (e.kind === 'tower' && e.hp > 0) {
@@ -630,6 +737,15 @@ export class Renderer {
           drawUnit(view.body, 'xbow', th, card.visual.body, card.visual.accent, e.team, {
             swing: swingVal,
           });
+        } else if (e.cardId === 'musketeer') {
+          // redrawn every frame so the muzzle flash, smoke and kick can play
+          view.body.clear();
+          view.muzzleFx.clear();
+          drawUnit(view.body, 'musketeer', th, card.visual.body, card.visual.accent, e.team, {
+            swing: swingVal,
+            animT: e.animT,
+            fx: view.muzzleFx,
+          });
         } else if (e.cardId === 'valkyrie') {
           const spinProg = e.state === 'attacking' && e.swing > 0.02 ? 1 - swingVal : 0;
           view.body.clear();
@@ -738,6 +854,13 @@ export class Renderer {
             bobX = Math.sin(e.animT * 58) * recoil * T * 0.1;
             bob.rotation = Math.sin(e.animT * 44 + 0.7) * recoil * 0.05;
             bobY -= recoil * T * 0.02;
+          } else if (e.cardId === 'musketeer' && e.swing > 0.02) {
+            // the blunderbuss shoves her back instead of lunging forward
+            const kick = Math.max(0, e.swing) ** 1.4;
+            const dir = bob.scale.x >= 0 ? 1 : -1;
+            bobX = -kick * T * 0.13 * dir;
+            bobY -= kick * T * 0.025;
+            bob.rotation = -kick * 0.09 * dir;
           } else if (e.cardId === 'valkyrie' && e.state === 'attacking' && e.swing > 0.02) {
             const spinProg = 1 - Math.max(0, e.swing);
             bob.rotation = spinProg * Math.PI * 2 * (bob.scale.x >= 0 ? 1 : -1);
@@ -750,7 +873,7 @@ export class Renderer {
             if (e.cardId === 'balloon' && lunge > 0.05) {
               bobY -= lunge * T * 0.05;
               bob.rotation = lunge * 0.08 * (bob.scale.x >= 0 ? 1 : -1);
-            } else if (e.cardId !== 'xbow' && e.cardId !== 'valkyrie' && e.cardId !== 'inferno' && !card?.visual.spriteCharacter) {
+            } else if (e.cardId !== 'xbow' && e.cardId !== 'valkyrie' && e.cardId !== 'inferno' && e.cardId !== 'musketeer' && !card?.visual.spriteCharacter) {
               const lungeMul =
                 e.cardId === 'prince'
                   ? 0.22
@@ -794,17 +917,55 @@ export class Renderer {
     }
 
     this.drawPendingSpells(world, alpha);
-    this.drawProjectiles(world, alpha);
+    this.drawProjectiles(world, alpha, dt);
     this.drainEffects(world);
     this.stepParticles(dt);
+    this.stepShake(dt);
+    this.stepFlash(dt);
+  }
 
-    if (this.shake > 0) {
-      this.shake -= dt;
-      const s = Math.max(0, this.shake) * 26;
-      this.root.position.x = (Math.random() - 0.5) * s;
-    } else {
-      this.root.position.x = 0;
+  /** Places the board, with `pivot` already at its centre, plus a shake offset. */
+  private applyCamera(dx: number, dy: number, roll: number) {
+    const boardH = ARENA.height * this.tile * this.squash;
+    const restY = (this.host.clientHeight - boardH) / 2;
+    this.root.position.set(
+      (ARENA.width * this.tile) / 2 + dx,
+      restY + boardH / 2 + dy,
+    );
+    this.root.rotation = roll;
+  }
+
+  /** Camera kick — X, Y and a hair of roll, decaying together. */
+  private stepShake(dt: number) {
+    if (this.shake <= 0) {
+      this.applyCamera(0, 0, 0);
+      return;
     }
+    this.shake -= dt;
+    const s = Math.max(0, this.shake);
+    const amp = s * 26;
+    this.applyCamera(
+      (Math.random() - 0.5) * amp,
+      (Math.random() - 0.5) * amp * 0.55,
+      (Math.random() - 0.5) * s * 0.012,
+    );
+  }
+
+  /** Full-board white-out on heavy impacts — one frame of "that mattered". */
+  private stepFlash(dt: number) {
+    if (this.flash <= 0) {
+      if (this.flashG.alpha !== 0) {
+        this.flashG.clear();
+        this.flashG.alpha = 0;
+      }
+      return;
+    }
+    this.flash = Math.max(0, this.flash - dt * 3.2);
+    this.flashG.clear();
+    this.flashG
+      .rect(0, 0, ARENA.width * this.tile, ARENA.height * this.tile * this.squash)
+      .fill(0xffffff);
+    this.flashG.alpha = this.flash * 0.5;
   }
 
   /**
@@ -870,7 +1031,7 @@ export class Renderer {
     }
   }
 
-  private drawProjectiles(world: World, alpha: number) {
+  private drawProjectiles(world: World, alpha: number, dt: number) {
     const alive = new Set<number>();
     for (const p of world.projectiles) {
       alive.add(p.id);
@@ -888,11 +1049,36 @@ export class Renderer {
       const y = p.py + (p.y - p.py) * alpha;
       const [sx, sy] = this.toScreen(x, y);
       g.position.set(sx, sy);
+
+      // Trail: one fading dot every ~35 ms, so the shot reads as travelling
+      // rather than teleporting between frames.
+      const due = (this.trailClock.get(p.id) ?? 0) - dt;
+      if (due <= 0) {
+        this.trailClock.set(p.id, 0.035);
+        const c = hexToNum(p.color);
+        const dot = new Graphics();
+        dot.circle(0, 0, p.size * this.tile * 0.8).fill({ color: c, alpha: 0.5 });
+        dot.position.set(sx, sy);
+        this.projLayer.addChildAt(dot, 0);
+        this.particles.push({
+          g: dot,
+          vx: 0,
+          vy: 0,
+          life: 0.16,
+          max: 0.16,
+          grow: 0,
+          spin: 0,
+          still: true,
+        });
+      } else {
+        this.trailClock.set(p.id, due);
+      }
     }
     for (const [id, g] of this.projViews) {
       if (alive.has(id)) continue;
       g.destroy();
       this.projViews.delete(id);
+      this.trailClock.delete(id);
     }
   }
 
@@ -902,14 +1088,19 @@ export class Renderer {
         case 'hit': {
           const [sx, sy] = this.toScreen(fx.x, fx.y);
           if (fx.color === '#8ff0ff') {
-            this.burst(sx, sy, 0x8ff0ff, 8, this.tile * 0.1, 0.32);
+            this.burst(sx, sy, 0x8ff0ff, 8, this.tile * 0.1, 0.32, {
+              shape: 'spark',
+              fadeTo: 0x2f6f8f,
+            });
             const zap = new Graphics();
             zap.poly([0, -this.tile * 0.35, this.tile * 0.12, -this.tile * 0.12, this.tile * 0.04, -this.tile * 0.12, this.tile * 0.16, this.tile * 0.22, -this.tile * 0.04, this.tile * 0.04, -this.tile * 0.12, 0, -this.tile * 0.12]).fill(0xfffbe0);
             zap.position.set(sx, sy);
             this.fxLayer.addChild(zap);
             this.particles.push({ g: zap, vx: 0, vy: 0, life: 0.18, max: 0.18, grow: 0, spin: 0 });
           } else {
-            this.burst(sx, sy, hexToNum(fx.color), 5, this.tile * 0.11, 0.28);
+            this.burst(sx, sy, hexToNum(fx.color), 5, this.tile * 0.11, 0.28, {
+              shape: 'spark',
+            });
           }
           break;
         }
@@ -926,7 +1117,14 @@ export class Renderer {
         }
         case 'death': {
           const [sx, sy] = this.toScreen(fx.x, fx.y);
-          this.burst(sx, sy - fx.scale * this.tile * 0.4, hexToNum(fx.color), 8, this.tile * 0.14, 0.45);
+          this.burst(sx, sy - fx.scale * this.tile * 0.4, hexToNum(fx.color), 8, this.tile * 0.14, 0.45, {
+            fadeTo: 0x3a2f22,
+          });
+          this.burst(sx, sy - fx.scale * this.tile * 0.3, 0x7d7364, 4, this.tile * 0.16, 0.55, {
+            shape: 'puff',
+            spread: 0.4,
+            lift: 0.7,
+          });
           break;
         }
         case 'deploy': {
@@ -942,8 +1140,19 @@ export class Renderer {
         }
         case 'towerDown': {
           const [sx, sy] = this.toScreen(fx.x, fx.y);
-          this.burst(sx, sy - this.tile, 0xb0a696, 18, this.tile * 0.22, 0.8);
-          this.shake = 0.4;
+          this.burst(sx, sy - this.tile, 0xb0a696, 18, this.tile * 0.22, 0.8, {
+            fadeTo: 0x54493c,
+          });
+          this.burst(sx, sy - this.tile * 0.6, 0x8b8172, 10, this.tile * 0.3, 1.4, {
+            shape: 'puff',
+            spread: 0.5,
+            lift: 0.9,
+          });
+          this.addDecal(sx, sy, 1.5, 0x3a2f22, 6);
+          this.shake = 0.45;
+          this.flash = 0.35;
+          // the whole match should feel the tower go down
+          this.hitStop = 0.09;
           break;
         }
         case 'spell': {
@@ -978,13 +1187,25 @@ export class Renderer {
 
   /** The impact of a spell: a coloured shockwave plus debris in its own palette. */
   private spellBlast(x: number, y: number, radius: number, shape: UnitShape) {
-    const looks: Record<string, { ring: number; bits: number; count: number; shake: number }> = {
-      fireball: { ring: 0xffa63d, bits: 0xe2622a, count: 22, shake: 0.28 },
-      arrows: { ring: 0xe8e2d0, bits: 0x9a7448, count: 18, shake: 0.1 },
-      zap: { ring: 0x8ff0ff, bits: 0x7b4fd6, count: 14, shake: 0.15 },
-      rage: { ring: 0xff6ec7, bits: 0xe91e8c, count: 16, shake: 0.12 },
-      freeze: { ring: 0xb3e5fc, bits: 0x7dd3fc, count: 20, shake: 0.14 },
-      goblin_barrel: { ring: 0xc9a86c, bits: 0x8a5f3d, count: 14, shake: 0.22 },
+    interface Look {
+      ring: number;
+      bits: number;
+      count: number;
+      shake: number;
+      /** colour the debris cools to as it dies */
+      ash: number;
+      bitShape: BurstShape;
+      /** scorch left behind, or 0 for spells that mark nothing */
+      decal: number;
+      flash: number;
+    }
+    const looks: Record<string, Look> = {
+      fireball: { ring: 0xffa63d, bits: 0xffd76a, count: 22, shake: 0.28, ash: 0x6b2f14, bitShape: 'chip', decal: 0x3a2416, flash: 0.3 },
+      arrows: { ring: 0xe8e2d0, bits: 0x9a7448, count: 18, shake: 0.1, ash: 0x54432c, bitShape: 'spark', decal: 0, flash: 0 },
+      zap: { ring: 0x8ff0ff, bits: 0xd6f6ff, count: 14, shake: 0.15, ash: 0x4a2f9c, bitShape: 'spark', decal: 0, flash: 0.22 },
+      rage: { ring: 0xff6ec7, bits: 0xff9ede, count: 16, shake: 0.12, ash: 0x8c1257, bitShape: 'puff', decal: 0, flash: 0 },
+      freeze: { ring: 0xb3e5fc, bits: 0xe4f6ff, count: 20, shake: 0.14, ash: 0x3f7fa8, bitShape: 'chip', decal: 0x9ecfe8, flash: 0.18 },
+      goblin_barrel: { ring: 0xc9a86c, bits: 0xc09163, count: 14, shake: 0.22, ash: 0x4a3120, bitShape: 'chip', decal: 0, flash: 0 },
     };
     const look = looks[shape] ?? looks.fireball;
 
@@ -996,6 +1217,15 @@ export class Renderer {
     this.fxLayer.addChild(ring);
     this.particles.push({ g: ring, vx: 0, vy: 0, life: 0.42, max: 0.42, grow: 1.35, spin: 0 });
 
+    // second, faster ring — reads as a shockwave rather than a single hoop
+    const ring2 = new Graphics();
+    ring2
+      .ellipse(0, 0, radius * this.tile * 0.3, radius * this.tile * this.squash * 0.3)
+      .stroke({ width: 2, color: 0xffffff, alpha: 0.7 });
+    ring2.position.set(x, y);
+    this.fxLayer.addChild(ring2);
+    this.particles.push({ g: ring2, vx: 0, vy: 0, life: 0.26, max: 0.26, grow: 2.4, spin: 0 });
+
     const flash = new Graphics();
     flash
       .ellipse(0, 0, radius * this.tile * 0.6, radius * this.tile * this.squash * 0.6)
@@ -1004,47 +1234,132 @@ export class Renderer {
     this.fxLayer.addChild(flash);
     this.particles.push({ g: flash, vx: 0, vy: 0, life: 0.22, max: 0.22, grow: 0.5, spin: 0 });
 
-    this.burst(x, y, look.bits, look.count, this.tile * 0.2, 0.55);
+    this.burst(x, y, look.bits, look.count, this.tile * 0.2, 0.55, {
+      shape: look.bitShape,
+      fadeTo: look.ash,
+    });
+    if (look.decal) this.addDecal(x, y, radius * 0.55, look.decal, 4.5);
     this.shake = Math.max(this.shake, look.shake);
+    this.flash = Math.max(this.flash, look.flash);
+    if (shape === 'fireball') this.hitStop = Math.max(this.hitStop, 0.05);
   }
 
-  private burst(x: number, y: number, color: number, count: number, size: number, life: number) {
+  /**
+   * Debris. `shape` picks the silhouette — chunky chips for stone and bone,
+   * thin sparks for energy, soft puffs for smoke — and `fadeTo` lets a piece
+   * cool through a second colour on its way out instead of only losing alpha.
+   */
+  private burst(
+    x: number,
+    y: number,
+    color: number,
+    count: number,
+    size: number,
+    life: number,
+    opts?: { shape?: BurstShape; fadeTo?: number; spread?: number; lift?: number },
+  ) {
+    const shape = opts?.shape ?? 'chip';
+    const spread = opts?.spread ?? 1;
+    const lift = opts?.lift ?? 1.5;
+
     for (let i = 0; i < count; i++) {
       const g = new Graphics();
-      g.rect(-size / 2, -size / 2, size, size).fill(color);
+      const s = size * (0.6 + Math.random() * 0.8);
+      if (shape === 'spark') {
+        g.roundRect(-s * 1.6, -s * 0.28, s * 3.2, s * 0.56, s * 0.28).fill(color);
+      } else if (shape === 'puff') {
+        g.circle(0, 0, s * 0.85).fill({ color, alpha: 0.85 });
+      } else {
+        // slightly irregular chip, so debris doesn't read as a grid of squares
+        g.poly([
+          -s * 0.5, -s * 0.5,
+          s * 0.55, -s * 0.38,
+          s * 0.42, s * 0.52,
+          -s * 0.46, s * 0.4,
+        ]).fill(color);
+      }
       g.position.set(x, y);
       this.fxLayer.addChild(g);
+
       const a = Math.random() * Math.PI * 2;
-      const sp = (0.4 + Math.random()) * this.tile * 3;
+      const sp = (0.4 + Math.random()) * this.tile * 3 * spread;
+      const pLife = life * (0.7 + Math.random() * 0.6);
       this.particles.push({
         g,
         vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp * 0.6 - this.tile * 1.5,
-        life,
-        max: life,
-        grow: 0,
-        spin: (Math.random() - 0.5) * 12,
+        vy: Math.sin(a) * sp * 0.6 - this.tile * lift,
+        life: pLife,
+        max: pLife,
+        grow: shape === 'puff' ? 0.9 : 0,
+        spin: shape === 'puff' ? 0 : (Math.random() - 0.5) * 12,
+        fadeTo: opts?.fadeTo,
+        drag: shape === 'spark' ? 3.2 : shape === 'puff' ? 5 : 1.1,
       });
     }
+  }
+
+  /** A mark on the ground that lingers well after the blast that made it. */
+  private addDecal(x: number, y: number, radius: number, color: number, life: number) {
+    const g = new Graphics();
+    const r = radius * this.tile;
+    g.ellipse(0, 0, r * 0.9, r * 0.9 * this.squash).fill({ color, alpha: 0.2 });
+    g.ellipse(0, 0, r * 0.55, r * 0.55 * this.squash).fill({ color, alpha: 0.14 });
+    // ragged rim so it doesn't read as a perfect circle
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + Math.random();
+      const rr = r * (0.7 + Math.random() * 0.45);
+      g.ellipse(
+        Math.cos(a) * rr,
+        Math.sin(a) * rr * this.squash,
+        r * 0.24,
+        r * 0.24 * this.squash,
+      ).fill({ color, alpha: 0.13 });
+    }
+    g.position.set(x, y);
+    this.groundFxLayer.addChild(g);
+    this.decals.push({ g, life, max: life });
   }
 
   private stepParticles(dt: number) {
     for (const p of this.particles) {
       p.life -= dt;
       const k = Math.max(0, p.life / p.max);
-      p.g.alpha = k;
-      if (p.grow > 0) {
+      p.g.alpha = p.grow > 0 ? k * 0.8 : Math.min(1, k * 1.6);
+      if (p.fadeTo !== undefined) {
+        // tint drifts toward the cool-down colour over the particle's life
+        p.g.tint = lerpColor(0xffffff, p.fadeTo, 1 - k);
+      }
+      if (p.still) {
+        p.g.scale.set(0.35 + k * 0.65);
+      } else if (p.grow > 0 && p.drag === undefined) {
         p.g.scale.set(1 + (1 - k) * p.grow);
       } else {
+        const drag = p.drag ?? 1.1;
+        const decay = Math.max(0, 1 - drag * dt);
+        p.vx *= decay;
+        p.vy *= decay;
         p.vy += this.tile * 10 * dt;
         p.g.position.x += p.vx * dt;
         p.g.position.y += p.vy * dt;
         p.g.rotation += p.spin * dt;
+        if (p.grow > 0) p.g.scale.set(1 + (1 - k) * p.grow);
       }
     }
     this.particles = this.particles.filter((p) => {
       if (p.life > 0) return true;
       p.g.destroy();
+      return false;
+    });
+
+    for (const d of this.decals) {
+      d.life -= dt;
+      const k = Math.max(0, d.life / d.max);
+      // hold full opacity, then fade only over the last third
+      d.g.alpha = Math.min(1, k * 3);
+    }
+    this.decals = this.decals.filter((d) => {
+      if (d.life > 0) return true;
+      d.g.destroy();
       return false;
     });
   }
@@ -1061,7 +1376,16 @@ export class Renderer {
     this.ragePuddleViews.clear();
     for (const p of this.particles) p.g.destroy();
     this.particles = [];
+    for (const d of this.decals) d.g.destroy();
+    this.decals = [];
+    this.trailClock.clear();
     this.shake = 0;
+    this.flash = 0;
+    this.hitStop = 0;
+    this.tension = 0;
+    this.flashG.clear();
+    this.flashG.alpha = 0;
+    this.tensionG.clear();
     this.deployPreview = null;
     this.previewG.clear();
   }

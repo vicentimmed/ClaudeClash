@@ -46,6 +46,12 @@ function migrateBalance(balance: Balance): Balance {
     const card = balance.cards[id];
     if (card && card.visual.shape !== shape) card.visual.shape = shape;
   }
+  // The goblins were redrawn small (skeleton-sized) and lost their extra arena
+  // boost. Saves from before that still carry the old oversized 1.22, which
+  // would silently override the new default.
+  if (balance.cards.goblins?.visual.scale === 1.22) {
+    balance.cards.goblins.visual.scale = DEFAULT_BALANCE.cards.goblins.visual.scale;
+  }
   if (balance.cards.zap?.name === 'Choque') {
     balance.cards.zap.name = DEFAULT_BALANCE.cards.zap.name;
   }

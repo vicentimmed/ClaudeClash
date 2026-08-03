@@ -33,6 +33,8 @@ const WATCHDOG_MS = 1000;
 /** Snapshot broadcast cadence — matches the sim tick rate. */
 const BALANCE: Balance = DEFAULT_BALANCE;
 const STEP_SEC = 1 / BALANCE.global.tickRate;
+/** 3-2-1 shown on both clients before the match clock actually starts. */
+const COUNTDOWN_MS = 3000;
 
 interface LiveMatch {
   world: World;
@@ -238,6 +240,8 @@ export class Hub {
   /** Coordinates arrive in the sender's own perspective. */
   private applyDeploy(slot: Slot, cardId: string, x: number, y: number) {
     if (!this.match) return;
+    // Countdown still running (timer isn't set until it ends) — no deploys yet.
+    if (!this.match.timer) return;
     const p = slot === 1 ? flipPoint(x, y) : { x, y };
     const hand = this.match.hands[slot];
     // Not in their hand — either a stale tap or a tampered client.
@@ -346,7 +350,16 @@ export class Hub {
     this.sendHand(0);
     this.sendHand(1);
 
-    this.match.timer = setInterval(() => this.tickMatch(), STEP_SEC * 1000);
+    // Both clients run their own local 3-2-1 over the same span; holding the
+    // real tick (and therefore every deploy — see `applyDeploy`) back by the
+    // same duration keeps the two in lockstep without needing a wire-level
+    // clock sync.
+    const matchId = room.matchId;
+    setTimeout(() => {
+      // A reconnect/disconnect may have torn this match down while we waited.
+      if (!this.match || this.match.matchId !== matchId) return;
+      this.match.timer = setInterval(() => this.tickMatch(), STEP_SEC * 1000);
+    }, COUNTDOWN_MS);
   }
 
   private sendHand(slot: Slot) {

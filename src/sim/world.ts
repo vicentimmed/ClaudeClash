@@ -175,6 +175,27 @@ export class World {
     );
   }
 
+  /**
+   * Centre of the enemy king tower, while it still stands. Drives the no-deploy
+   * bubble that keeps an opened lane from becoming a free drop on the king.
+   */
+  enemyKingGuard(team: Team): { x: number; y: number } | undefined {
+    const enemy: Team = team === 0 ? 1 : 0;
+    const king = this.entities.find(
+      (e) => e.kind === 'tower' && e.towerKind === 'king' && e.team === enemy && e.hp > 0,
+    );
+    return king ? { x: king.x, y: king.y } : undefined;
+  }
+
+  private clearOfEnemyKing(team: Team, x: number, y: number): boolean {
+    const king = this.enemyKingGuard(team);
+    if (!king) return true;
+    return (
+      Math.abs(x - king.x) >= ARENA.kingDeployBlockHalfW ||
+      Math.abs(y - king.y) >= ARENA.kingDeployBlockHalfH
+    );
+  }
+
   canDeploy(team: Team, x: number, y: number, cardId?: string): boolean {
     if (x < 0.6 || x > ARENA.width - 0.6 || y < 0.6 || y > ARENA.height - 0.6) return false;
     // spells can be thrown anywhere on the board
@@ -182,10 +203,12 @@ export class World {
     const side: Side = x < ARENA.width / 2 ? 'left' : 'right';
     if (team === 0) {
       if (y > ARENA.riverBottom + 0.3) return true;
-      return this.sideUnlocked(0, side) && y > 3.5;
+      return this.sideUnlocked(0, side) && y > 3.5 && this.clearOfEnemyKing(0, x, y);
     }
     if (y < ARENA.riverTop - 0.3) return true;
-    return this.sideUnlocked(1, side) && y < ARENA.height - 3.5;
+    return (
+      this.sideUnlocked(1, side) && y < ARENA.height - 3.5 && this.clearOfEnemyKing(1, x, y)
+    );
   }
 
   // ---------------------------------------------------------------- actions
@@ -784,7 +807,8 @@ export class World {
     }
 
     e.state = 'moving';
-    const [wx, wy] = this.waypoint(e, target.x, target.y);
+    const [bwx, bwy] = this.waypoint(e, target.x, target.y);
+    const [wx, wy] = this.avoidTowers(e, bwx, bwy);
     const dx = wx - e.x;
     const dy = wy - e.y;
     const len = Math.hypot(dx, dy);
@@ -885,6 +909,54 @@ export class World {
       return [bx, onBottom ? riverBottom + 0.7 : riverTop - 0.7];
     }
     return [bx, onBottom ? riverTop - 0.7 : riverBottom + 0.7];
+  }
+
+  /**
+   * Towers are solid now, and steering alone stalls when one sits exactly on
+   * the line to the waypoint — the separation push comes back along the same
+   * axis the unit is pushing into. That is the common case, since each princess
+   * tower shares its lane's x with the bridge. So when a tower blocks the path
+   * we aim at its edge instead and let the unit resume once it is clear.
+   */
+  private avoidTowers(e: Entity, wx: number, wy: number): [number, number] {
+    if (e.flying) return [wx, wy];
+    const dx = wx - e.x;
+    const dy = wy - e.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-4) return [wx, wy];
+    const ux = dx / len;
+    const uy = dy / len;
+
+    for (const t of this.entities) {
+      if (t.kind !== 'tower' || t.hp <= 0) continue;
+      // walking in to attack it is not "blocked"
+      if (e.targetId === t.id) continue;
+      const clear = t.radius + e.radius + 0.15;
+      const relX = t.x - e.x;
+      const relY = t.y - e.y;
+      const along = relX * ux + relY * uy;
+      // ignore towers behind us or well past the waypoint
+      if (along <= 0 || along > len + t.radius) continue;
+      const side = relX * -uy + relY * ux;
+      if (Math.abs(side) >= clear) continue;
+
+      let dir: number;
+      if (Math.abs(side) < 0.05) {
+        // dead-on: step off toward mid-field rather than into the side wall
+        dir = (ARENA.width / 2 - t.x) * -uy >= 0 ? 1 : -1;
+      } else {
+        dir = side >= 0 ? -1 : 1;
+      }
+      // Aim past the tower, not merely beside it: a point level with the tower
+      // is one the unit can actually reach, and it would then sit there with a
+      // zero-length move vector instead of rounding the corner.
+      const ahead = t.radius + 0.5;
+      return [
+        t.x + -uy * dir * clear + ux * ahead,
+        t.y + ux * dir * clear + uy * ahead,
+      ];
+    }
+    return [wx, wy];
   }
 
   private acquireTarget(e: Entity): Entity | undefined {
@@ -1144,16 +1216,21 @@ export class World {
 
   /** Push overlapping ground units apart so they don't pile into one pixel. */
   private separate() {
+    // Towers join as immovable bodies: ground troops collide with them
+    // regardless of team, so a unit dropped behind a friendly tower has to walk
+    // around it instead of straight through. Standing rubble is skipped by the
+    // hp check, and flyers never match a tower's `flying` flag.
     const movers = this.entities.filter(
-      (e) => (e.kind === 'troop' || e.kind === 'building') && e.hp > 0,
+      (e) =>
+        (e.kind === 'troop' || e.kind === 'building' || e.kind === 'tower') && e.hp > 0,
     );
     for (let i = 0; i < movers.length; i++) {
       const a = movers[i];
       for (let j = i + 1; j < movers.length; j++) {
         const b = movers[j];
         if (a.flying !== b.flying) continue;
-        const aFixed = a.kind === 'building';
-        const bFixed = b.kind === 'building';
+        const aFixed = a.kind !== 'troop';
+        const bFixed = b.kind !== 'troop';
         if (aFixed && bFixed) continue;
         const dx = b.x - a.x;
         const dy = b.y - a.y;

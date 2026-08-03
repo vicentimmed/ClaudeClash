@@ -44,6 +44,12 @@ export interface DrawUnitOpts {
   jumpRaise?: number;
   /** Swarm card icons: scales each member of the trio (deck builder thumbnails). */
   swarmScale?: number;
+  /**
+   * Musketeer: separate layer for the muzzle blast. The arena renderer passes
+   * its un-outlined `muzzleFx` graphics here; card art leaves it out and the
+   * blast falls back to the body (harmless, since icons draw with swing 0).
+   */
+  fx?: Graphics;
 }
 
 /** One skeleton with feet anchored at (cx, cy). */
@@ -426,7 +432,14 @@ export function drawBalloonBombDrop(
   }
 }
 
-/** One goblin with feet anchored at (cx, cy) — Clash-style dagger goblin. */
+/**
+ * One goblin with feet anchored at (cx, cy).
+ *
+ * Deliberately flat and low-detail so it reads as a sibling of
+ * `drawSingleSkeletonAt`: solid shapes, no gradients, no outlines. The
+ * silhouette carries the character — pointed ears, big head, dagger — instead
+ * of surface detail that vanishes at arena scale anyway.
+ */
 function drawSingleGoblinAt(
   g: Graphics,
   h: number,
@@ -437,127 +450,82 @@ function drawSingleGoblinAt(
   swing = 0,
 ) {
   const body = hexToNum(bodyHex);
-  const bodyLight = shade(bodyHex, 0.14);
-  const bodyDark = shade(bodyHex, -0.32);
-  const pants = hexToNum(accentHex);
-  const pantsDark = shade(accentHex, -0.22);
-  const boot = 0x8a5a38;
-  const bootLight = 0xa07048;
-  const strap = 0xc43828;
-  const eyeYellow = 0xffee44;
-  const tooth = 0xf5f0e8;
-  const gold = 0xd4a832;
+  const bodyDark = shade(bodyHex, -0.26);
+  const cloth = hexToNum(accentHex);
   const slash = Math.max(0, swing) ** 2;
+  // the knife arm drives forward and dips as the stab lands
+  const reach = slash * h * 0.22;
+  const dip = slash * h * 0.05;
 
-  const drawEar = (side: number) => {
-    const ex = cx + side * h * 0.13;
-    const ey = cy - h * 0.66;
-    g.poly([
-      ex, ey,
-      ex + side * h * 0.2, ey - h * 0.035,
-      ex + side * h * 0.05, ey + h * 0.055,
-    ]).fill(bodyLight);
-    g.poly([
-      ex, ey,
-      ex + side * h * 0.2, ey - h * 0.035,
-      ex + side * h * 0.05, ey + h * 0.055,
-    ]).stroke({ width: h * 0.012, color: bodyDark });
-  };
-  drawEar(-1);
-  drawEar(1);
+  // legs
+  g.rect(cx - h * 0.115, cy - h * 0.21, h * 0.08, h * 0.21).fill(bodyDark);
+  g.rect(cx + h * 0.035, cy - h * 0.21, h * 0.08, h * 0.21).fill(bodyDark);
 
-  const drawShoe = (side: number) => {
-    const sx = cx + side * h * 0.11;
-    g.roundRect(sx - h * 0.075, cy - h * 0.085, h * 0.15, h * 0.085, h * 0.025).fill(boot);
-    g.ellipse(sx + side * h * 0.085, cy - h * 0.045, h * 0.05, h * 0.038).fill(bootLight);
-    g.ellipse(sx + side * h * 0.1, cy - h * 0.05, h * 0.028, h * 0.02).fill(boot);
-  };
-  drawShoe(-1);
-  drawShoe(1);
+  // loincloth
+  g.roundRect(cx - h * 0.15, cy - h * 0.35, h * 0.3, h * 0.16, h * 0.04).fill(cloth);
 
-  g.roundRect(cx - h * 0.155, cy - h * 0.3, h * 0.31, h * 0.24, h * 0.035).fill(pants);
-  g.rect(cx - h * 0.155, cy - h * 0.3, h * 0.31, h * 0.045).fill(pantsDark);
+  // torso
+  g.roundRect(cx - h * 0.14, cy - h * 0.57, h * 0.28, h * 0.25, h * 0.07).fill(body);
 
-  g.roundRect(cx - h * 0.13, cy - h * 0.56, h * 0.055, h * 0.18, h * 0.02).fill(body);
-  g.circle(cx - h * 0.1, cy - h * 0.52, h * 0.038).fill(bodyLight);
+  // trailing arm
+  g.rect(cx - h * 0.19, cy - h * 0.54, h * 0.06, h * 0.2).fill(bodyDark);
 
-  g.ellipse(cx + h * 0.015, cy - h * 0.44, h * 0.17, h * 0.15).fill(body);
-  g.ellipse(cx + h * 0.02, cy - h * 0.4, h * 0.12, h * 0.09).fill(bodyLight);
-  g.circle(cx + h * 0.01, cy - h * 0.34, h * 0.016).fill(bodyDark);
+  // knife arm, thrusting forward
+  const armY = cy - h * 0.5 + dip;
+  const shoulderX = cx + h * 0.09;
+  const handX = cx + h * 0.19 + reach;
+  g.rect(shoulderX, armY, handX - shoulderX, h * 0.062).fill(body);
+  const fistX = handX;
+  const fistY = armY + h * 0.031;
+  g.circle(fistX, fistY, h * 0.046).fill(body);
 
-  const strapW = h * 0.028;
-  g.moveTo(cx - h * 0.1, cy - h * 0.28)
-    .lineTo(cx - h * 0.055, cy - h * 0.54)
-    .stroke({ width: strapW, color: strap, cap: 'round' });
-  g.moveTo(cx + h * 0.1, cy - h * 0.28)
-    .lineTo(cx + h * 0.04, cy - h * 0.54)
-    .stroke({ width: strapW, color: strap, cap: 'round' });
-
-  const handX = cx + h * 0.15 + slash * h * 0.12;
-  const handY = cy - h * 0.48 + slash * h * 0.07;
-  g.roundRect(handX - h * 0.028, handY, h * 0.055, h * 0.13, h * 0.02).fill(body);
-  g.circle(handX, handY - h * 0.015, h * 0.038).fill(bodyLight);
-
-  const stabAngle = -1.35 + slash * 1.25;
-  const cosA = Math.cos(stabAngle);
-  const sinA = Math.sin(stabAngle);
-  const perpX = Math.cos(stabAngle + Math.PI / 2);
-  const perpY = Math.sin(stabAngle + Math.PI / 2);
-  const handleLen = h * 0.09;
-  const bladeLen = h * 0.26;
-  const handleEndX = handX + cosA * handleLen;
-  const handleEndY = handY + sinA * handleLen;
-  const tipX = handleEndX + cosA * bladeLen;
-  const tipY = handleEndY + sinA * bladeLen;
-  const bladeW = h * 0.065;
-
-  g.circle(handX, handY, h * 0.028).fill(gold);
-  g.moveTo(handX, handY)
-    .lineTo(handleEndX, handleEndY)
-    .stroke({ width: h * 0.038, color: boot, cap: 'round' });
+  // dagger — cocked upward at rest, levelled out at the end of the thrust
+  const stab = -0.62 + slash * 0.62;
+  const ca = Math.cos(stab);
+  const sa = Math.sin(stab);
+  const kx = (d: number, s: number) => fistX + ca * d - sa * s;
+  const ky = (d: number, s: number) => fistY + sa * d + ca * s;
+  g.moveTo(kx(-h * 0.05, 0), ky(-h * 0.05, 0))
+    .lineTo(kx(h * 0.045, 0), ky(h * 0.045, 0))
+    .stroke({ width: h * 0.045, color: cloth, cap: 'round' });
   g.poly([
-    handleEndX + perpX * bladeW * 0.55, handleEndY + perpY * bladeW * 0.55,
-    handleEndX - perpX * bladeW * 0.55, handleEndY - perpY * bladeW * 0.55,
-    tipX, tipY,
+    kx(h * 0.045, -h * 0.038), ky(h * 0.045, -h * 0.038),
+    kx(h * 0.045, h * 0.038), ky(h * 0.045, h * 0.038),
+    kx(h * 0.3, 0), ky(h * 0.3, 0),
   ]).fill(STEEL);
+
+  // ears, behind the head so they read as part of the silhouette
+  const headY = cy - h * 0.71;
   g.poly([
-    handleEndX + perpX * bladeW * 0.55, handleEndY + perpY * bladeW * 0.55,
-    handleEndX - perpX * bladeW * 0.55, handleEndY - perpY * bladeW * 0.55,
-    tipX, tipY,
-  ]).stroke({ width: h * 0.01, color: shade(STEEL, -0.25) });
+    cx - h * 0.13, headY - h * 0.05,
+    cx - h * 0.33, headY - h * 0.14,
+    cx - h * 0.12, headY + h * 0.07,
+  ]).fill(bodyDark);
+  g.poly([
+    cx + h * 0.13, headY - h * 0.05,
+    cx + h * 0.33, headY - h * 0.14,
+    cx + h * 0.12, headY + h * 0.07,
+  ]).fill(bodyDark);
 
-  const headY = cy - h * 0.64;
-  g.roundRect(cx - h * 0.145, headY - h * 0.17, h * 0.29, h * 0.21, h * 0.07).fill(body);
+  // head
+  g.circle(cx, headY, h * 0.17).fill(body);
 
-  const drawBrow = (side: number) => {
-    g.moveTo(cx + side * h * 0.04, headY - h * 0.1)
-      .lineTo(cx + side * h * 0.12, headY - h * 0.115)
-      .stroke({ width: h * 0.024, color: bodyDark, cap: 'round' });
-  };
-  drawBrow(-1);
-  drawBrow(1);
+  // eyes
+  g.circle(cx - h * 0.062, headY - h * 0.025, h * 0.047).fill(0xffe14d);
+  g.circle(cx + h * 0.072, headY - h * 0.025, h * 0.045).fill(0xffe14d);
+  g.circle(cx - h * 0.052, headY - h * 0.018, h * 0.021).fill(DARK_EYE);
+  g.circle(cx + h * 0.08, headY - h * 0.018, h * 0.02).fill(DARK_EYE);
 
-  const drawEye = (side: number) => {
-    const ex = cx + side * h * 0.07;
-    const ey = headY - h * 0.04;
-    g.circle(ex, ey, h * 0.048).fill(eyeYellow);
-    g.circle(ex + side * h * 0.008, ey + h * 0.006, h * 0.022).fill(DARK_EYE);
-    g.circle(ex - side * h * 0.012, ey - h * 0.012, h * 0.012).fill({ color: 0xffffff, alpha: 0.55 });
-  };
-  drawEye(-1);
-  drawEye(1);
-
-  g.circle(cx + h * 0.01, headY + h * 0.015, h * 0.04).fill(bodyLight);
-  g.circle(cx, headY + h * 0.012, h * 0.012).fill({ color: 0xffffff, alpha: 0.25 });
-
-  const mouthY = headY + h * 0.065;
-  g.ellipse(cx + h * 0.015, mouthY, h * 0.085, h * 0.042).fill(0x3a1818);
-  g.rect(cx - h * 0.045, mouthY - h * 0.018, h * 0.03, h * 0.018).fill(tooth);
-  g.rect(cx - h * 0.008, mouthY - h * 0.018, h * 0.028, h * 0.018).fill(tooth);
-  g.rect(cx + h * 0.028, mouthY - h * 0.018, h * 0.022, h * 0.018).fill(tooth);
+  // grin
+  g.roundRect(cx - h * 0.055, headY + h * 0.055, h * 0.13, h * 0.048, h * 0.016).fill(0x2c1a14);
+  g.rect(cx - h * 0.038, headY + h * 0.055, h * 0.026, h * 0.026).fill(0xf2ecdd);
+  g.rect(cx + h * 0.032, headY + h * 0.055, h * 0.026, h * 0.026).fill(0xf2ecdd);
 
   if (slash > 0.2) {
-    g.circle(tipX, tipY, h * 0.035).fill({ color: 0xffffff, alpha: slash * 0.35 });
+    g.circle(kx(h * 0.32, 0), ky(h * 0.32, 0), h * 0.038).fill({
+      color: 0xffffff,
+      alpha: slash * 0.35,
+    });
   }
 }
 
@@ -1176,137 +1144,108 @@ export function drawUnit(
     }
 
     case 'knight': {
+      // Same flat, low-detail language as the skeleton and the goblin: solid
+      // shapes, no outlines, no surface shading. The Clash-Royale read comes
+      // from the silhouette — bucket helm with a dark visor slit, silver plate,
+      // team-coloured surcoat and a broad sword that chops.
       const swing = opts?.swing ?? 0;
       const slash = Math.max(0, swing) ** 2;
-      const teamColor = team !== undefined ? TEAM_COLOR[team] : 0x3b7dd8;
       const w = h * 0.52;
-      const gold = body;
-      const goldDark = shade(body, -0.28);
-      const goldLight = shade(body, 0.2);
+      const teamColor = team !== undefined ? TEAM_COLOR[team] : 0x3b7dd8;
       const steel = hexToNum(accentHex);
-      const steelDark = shade(accentHex, -0.35);
-      const steelLight = shade(accentHex, 0.18);
-      const leather = 0x5c3d24;
-      const boot = 0x3a2818;
+      const steelDark = shade(accentHex, -0.3);
+      const gold = body;
+      const tunic = teamColor;
+      const tunicDark = shade(teamColor, -0.26);
+      const visor = 0x25252e;
 
-      g.roundRect(-w * 0.28, -h * 0.24, w * 0.22, h * 0.24, h * 0.03).fill(steelDark);
-      g.roundRect(w * 0.06, -h * 0.24, w * 0.22, h * 0.24, h * 0.03).fill(steelDark);
-      g.roundRect(-w * 0.3, -h * 0.07, w * 0.26, h * 0.07, h * 0.015).fill(boot);
-      g.roundRect(w * 0.04, -h * 0.07, w * 0.26, h * 0.07, h * 0.015).fill(boot);
+      // legs
+      g.rect(-w * 0.28, -h * 0.2, w * 0.22, h * 0.2).fill(steelDark);
+      g.rect(w * 0.06, -h * 0.2, w * 0.22, h * 0.2).fill(steelDark);
 
-      g.poly([-w * 0.46, -h * 0.18, w * 0.46, -h * 0.18, w * 0.3, -h * 0.52, -w * 0.3, -h * 0.52]).fill(
-        teamColor,
-      );
-      g.poly([-w * 0.34, -h * 0.2, w * 0.34, -h * 0.2, w * 0.22, -h * 0.48, -w * 0.22, -h * 0.48]).fill(
-        shade(teamColor, 0.12),
-      );
-      g.rect(-w * 0.32, -h * 0.2, w * 0.64, h * 0.035).fill(gold);
-      g.rect(-w * 0.18, -h * 0.22, w * 0.36, h * 0.06).fill(steel);
-
-      g.roundRect(-w * 0.36, -h * 0.74, w * 0.72, h * 0.28, h * 0.07).fill(gold);
-      g.roundRect(-w * 0.3, -h * 0.72, w * 0.6, h * 0.22, h * 0.05).fill(goldLight);
-      g.roundRect(-w * 0.14, -h * 0.72, w * 0.28, h * 0.2, h * 0.04).fill(steelLight);
-      g.rect(-w * 0.04, -h * 0.72, w * 0.08, h * 0.18).fill(goldDark);
-
-      g.rect(-w * 0.36, -h * 0.48, w * 0.72, h * 0.05).fill(leather);
-      g.rect(-w * 0.06, -h * 0.49, w * 0.12, h * 0.07).fill(gold);
-      g.circle(0, -h * 0.455, h * 0.022).fill(goldDark);
-
-      g.circle(-w * 0.42, -h * 0.68, h * 0.1).fill(steel);
-      g.circle(-w * 0.42, -h * 0.68, h * 0.065).fill(steelLight);
-      g.circle(w * 0.42, -h * 0.68, h * 0.1).fill(steel);
-      g.circle(w * 0.42, -h * 0.68, h * 0.065).fill(steelLight);
-      g.circle(-w * 0.42, -h * 0.68, h * 0.11).stroke({ width: h * 0.014, color: gold });
-      g.circle(w * 0.42, -h * 0.68, h * 0.11).stroke({ width: h * 0.014, color: gold });
-
-      g.roundRect(-w * 0.56, -h * 0.66, w * 0.14, h * 0.08, h * 0.02).fill(steel);
-      g.roundRect(-w * 0.62, -h * 0.82, w * 0.28, h * 0.34, h * 0.05).fill(teamColor);
-      g.roundRect(-w * 0.62, -h * 0.82, w * 0.28, h * 0.34, h * 0.05).stroke({
-        width: h * 0.018,
-        color: gold,
-      });
-      g.circle(-w * 0.48, -h * 0.65, h * 0.045).fill(gold);
+      // surcoat
       g.poly([
-        -w * 0.48, -h * 0.78,
-        -w * 0.54, -h * 0.72,
-        -w * 0.48, -h * 0.66,
-        -w * 0.42, -h * 0.72,
-      ]).fill(goldLight);
+        -w * 0.44, -h * 0.16,
+        w * 0.44, -h * 0.16,
+        w * 0.32, -h * 0.48,
+        -w * 0.32, -h * 0.48,
+      ]).fill(tunic);
+      g.rect(-w * 0.44, -h * 0.195, w * 0.88, h * 0.035).fill(tunicDark);
 
-      const armLean = slash * h * 0.06;
-      g.roundRect(w * 0.38 + armLean, -h * 0.68, w * 0.16, h * 0.08, h * 0.02).fill(steel);
-      g.circle(w * 0.5 + armLean, -h * 0.64, h * 0.042).fill(SKIN);
+      // belt
+      g.rect(-w * 0.34, -h * 0.52, w * 0.68, h * 0.06).fill(gold);
 
-      const handX = w * 0.5 + armLean;
-      const handY = -h * 0.64;
-      const swordAngle = -2.35 + slash * 2.05;
-      const swordLen = h * 0.58;
-      const tipX = handX + Math.cos(swordAngle) * swordLen;
-      const tipY = handY + Math.sin(swordAngle) * swordLen;
-      const perpX = Math.cos(swordAngle + Math.PI / 2) * h * 0.018;
-      const perpY = Math.sin(swordAngle + Math.PI / 2) * h * 0.018;
+      // breastplate
+      g.roundRect(-w * 0.35, -h * 0.78, w * 0.7, h * 0.28, h * 0.07).fill(steel);
 
-      if (slash > 0.08) {
-        const trailAlpha = slash * 0.55;
-        g.moveTo(handX, handY)
-          .lineTo(tipX, tipY)
-          .stroke({ width: h * 0.05, color: 0xffffff, alpha: trailAlpha * 0.35 });
-        g.arc(handX, handY, h * 0.38, swordAngle - 0.55, swordAngle + 0.35).stroke({
-          width: h * 0.028,
-          color: 0xe8f4ff,
-          alpha: trailAlpha,
-        });
+      // pauldrons
+      g.circle(-w * 0.4, -h * 0.73, h * 0.1).fill(steel);
+      g.circle(w * 0.4, -h * 0.73, h * 0.1).fill(steel);
+
+      // trailing arm
+      g.rect(-w * 0.52, -h * 0.72, w * 0.16, h * 0.26).fill(steelDark);
+
+      // sword arm — lifts and reaches forward through the chop
+      const armY = -h * 0.7 + slash * h * 0.06;
+      const shoulderX = w * 0.34;
+      const handX = w * 0.52 + slash * h * 0.07;
+      g.rect(shoulderX, armY, handX - shoulderX, h * 0.075).fill(steelDark);
+      const fistX = handX;
+      const fistY = armY + h * 0.037;
+      g.circle(fistX, fistY, h * 0.05).fill(steelDark);
+
+      // sword — held upright at rest, chops down and forward on the swing
+      const sword = -1.7 + slash * 1.8;
+      const ca = Math.cos(sword);
+      const sa = Math.sin(sword);
+      const sx = (d: number, s: number) => fistX + ca * d - sa * s;
+      const sy = (d: number, s: number) => fistY + sa * d + ca * s;
+
+      // Thin smear following the tip, so the chop reads without the big
+      // detached arc a wide sweep would leave floating behind him. The moveTo
+      // is required: without it the arc draws a chord back to whatever the
+      // previous sub-path left as the current point, streaking across the body.
+      if (slash > 0.15) {
+        const trailFrom = sword - 0.55;
+        g.moveTo(fistX + Math.cos(trailFrom) * h * 0.43, fistY + Math.sin(trailFrom) * h * 0.43)
+          .arc(fistX, fistY, h * 0.43, trailFrom, sword - 0.06)
+          .stroke({ width: h * 0.028, color: 0xeaf4ff, alpha: slash * 0.5 });
       }
 
+      // grip, crossguard, blade
+      const bladeLen = h * 0.46;
+      g.moveTo(sx(-h * 0.055, 0), sy(-h * 0.055, 0))
+        .lineTo(sx(h * 0.035, 0), sy(h * 0.035, 0))
+        .stroke({ width: h * 0.04, color: steelDark, cap: 'round' });
+      g.moveTo(sx(h * 0.04, -h * 0.07), sy(h * 0.04, -h * 0.07))
+        .lineTo(sx(h * 0.04, h * 0.07), sy(h * 0.04, h * 0.07))
+        .stroke({ width: h * 0.034, color: gold, cap: 'round' });
       g.poly([
-        handX + perpX, handY + perpY,
-        handX - perpX, handY - perpY,
-        tipX - perpX * 0.35, tipY - perpY * 0.35,
-        tipX, tipY,
-        tipX + perpX * 0.35, tipY + perpY * 0.35,
-      ]).fill(steelLight);
-      g.poly([
-        tipX, tipY,
-        tipX - Math.cos(swordAngle) * h * 0.1 - perpX, tipY - Math.sin(swordAngle) * h * 0.1 - perpY,
-        tipX - Math.cos(swordAngle) * h * 0.1 + perpX, tipY - Math.sin(swordAngle) * h * 0.1 + perpY,
-      ]).fill(0xffffff);
-      g.poly([
-        handX + Math.cos(swordAngle + Math.PI / 2) * h * 0.07,
-        handY + Math.sin(swordAngle + Math.PI / 2) * h * 0.07,
-        handX + Math.cos(swordAngle - Math.PI / 2) * h * 0.07,
-        handY + Math.sin(swordAngle - Math.PI / 2) * h * 0.07,
-        handX + Math.cos(swordAngle) * h * 0.04 - Math.cos(swordAngle + Math.PI / 2) * h * 0.05,
-        handY + Math.sin(swordAngle) * h * 0.04 - Math.sin(swordAngle + Math.PI / 2) * h * 0.05,
-        handX + Math.cos(swordAngle) * h * 0.04 + Math.cos(swordAngle + Math.PI / 2) * h * 0.05,
-        handY + Math.sin(swordAngle) * h * 0.04 + Math.sin(swordAngle + Math.PI / 2) * h * 0.05,
-      ]).fill(gold);
-      g.poly([
-        handX + Math.cos(swordAngle) * h * 0.05 + perpX * 1.4,
-        handY + Math.sin(swordAngle) * h * 0.05 + perpY * 1.4,
-        handX + Math.cos(swordAngle) * h * 0.05 - perpX * 1.4,
-        handY + Math.sin(swordAngle) * h * 0.05 - perpY * 1.4,
-        handX - Math.cos(swordAngle) * h * 0.05 - perpX * 1.4,
-        handY - Math.sin(swordAngle) * h * 0.05 - perpY * 1.4,
-        handX - Math.cos(swordAngle) * h * 0.05 + perpX * 1.4,
-        handY - Math.sin(swordAngle) * h * 0.05 + perpY * 1.4,
-      ]).fill(leather);
+        sx(h * 0.055, -h * 0.043), sy(h * 0.055, -h * 0.043),
+        sx(h * 0.055, h * 0.043), sy(h * 0.055, h * 0.043),
+        sx(bladeLen * 0.8, h * 0.03), sy(bladeLen * 0.8, h * 0.03),
+        sx(bladeLen, 0), sy(bladeLen, 0),
+        sx(bladeLen * 0.8, -h * 0.03), sy(bladeLen * 0.8, -h * 0.03),
+      ]).fill(steel);
 
-      g.roundRect(-w * 0.16, -h * 0.96, w * 0.32, h * 0.22, h * 0.06).fill(steel);
-      g.roundRect(-w * 0.12, -h * 0.94, w * 0.24, h * 0.16, h * 0.04).fill(steelLight);
-      g.roundRect(-w * 0.1, -h * 0.9, w * 0.2, h * 0.05, h * 0.015).fill(0x2a2218);
-      g.circle(-h * 0.035, -h * 0.875, h * 0.012).fill(0x4a6080);
-      g.circle(h * 0.035, -h * 0.875, h * 0.012).fill(0x4a6080);
-      g.rect(-w * 0.16, -h * 0.96, w * 0.32, h * 0.035).fill(gold);
-      g.roundRect(-w * 0.14, -h * 0.82, w * 0.1, h * 0.06, h * 0.02).fill(steelDark);
-      g.roundRect(w * 0.04, -h * 0.82, w * 0.1, h * 0.06, h * 0.02).fill(steelDark);
+      // gorget
+      g.rect(-w * 0.14, -h * 0.84, w * 0.28, h * 0.08).fill(steelDark);
+
+      // helm
+      const headY = -h * 0.92;
+      g.roundRect(-w * 0.3, headY - h * 0.13, w * 0.6, h * 0.28, h * 0.075).fill(steel);
+      g.rect(-w * 0.3, headY - h * 0.055, w * 0.6, h * 0.028).fill(gold);
+      g.roundRect(-w * 0.26, headY - h * 0.005, w * 0.52, h * 0.06, h * 0.022).fill(visor);
+      g.circle(-h * 0.038, headY + h * 0.025, h * 0.015).fill(0x7fd4ff);
+      g.circle(h * 0.038, headY + h * 0.025, h * 0.015).fill(0x7fd4ff);
+
+      // crest
       g.poly([
-        0, -h * 0.98,
-        h * 0.05, -h * 1.12,
-        h * 0.01, -h * 1.06,
-        -h * 0.03, -h * 1.16,
-        -h * 0.02, -h * 1.02,
-      ]).fill(teamColor);
-      g.poly([0, -h * 0.98, h * 0.03, -h * 1.08, -h * 0.01, -h * 1.04]).fill(shade(teamColor, 0.25));
+        -h * 0.055, headY - h * 0.13,
+        h * 0.055, headY - h * 0.13,
+        h * 0.02, headY - h * 0.23,
+        -h * 0.065, headY - h * 0.19,
+      ]).fill(tunic);
       break;
     }
 
@@ -1346,18 +1285,478 @@ export function drawUnit(
     }
 
     case 'musketeer': {
-      const w = h * 0.46;
-      g.poly([-w * 0.52, 0, w * 0.52, 0, w * 0.32, -h * 0.48, -w * 0.32, -h * 0.48]).fill(body);
-      g.roundRect(-w * 0.3, -h * 0.7, w * 0.6, h * 0.25, h * 0.05).fill(shade(body, 0.14));
-      g.rect(-w * 0.32, -h * 0.56, w * 0.64, h * 0.05).fill(accent);
-      g.circle(0, -h * 0.79, h * 0.13).fill(SKIN);
-      g.ellipse(h * 0.1, -h * 0.72, h * 0.09, h * 0.14).fill(0xb8622f);
-      g.ellipse(0, -h * 0.88, h * 0.19, h * 0.06).fill(accent);
-      g.ellipse(-h * 0.02, -h * 0.92, h * 0.11, h * 0.07).fill(accent);
-      g.circle(-h * 0.05, -h * 0.79, h * 0.02).fill(DARK_EYE);
-      g.circle(h * 0.04, -h * 0.79, h * 0.02).fill(DARK_EYE);
-      g.rect(-w * 0.15, -h * 0.72, h * 0.72, h * 0.05).fill(0x4a3626);
-      g.rect(h * 0.4, -h * 0.735, h * 0.2, h * 0.05).fill(STEEL);
+      // Fire cycle rides on `swing`, which the sim sets to 1 on each shot and
+      // decays to 0 in ~0.25 s: flash first, then the kick settling back.
+      const shot = Math.max(0, Math.min(1, opts?.swing ?? 0));
+      const flash = Math.max(0, (shot - 0.7) / 0.3);
+      const recoil = shot ** 1.4;
+      const smokeAge = shot > 0.01 ? 1 - shot : -1;
+      const idle = Math.sin((opts?.animT ?? 0) * 2.6);
+
+      const w = h * 0.5;
+      const teamColor = team !== undefined ? TEAM_COLOR[team] : body;
+      const cape = teamColor;
+      const capeDark = shade(teamColor, -0.34);
+      const capeLight = shade(teamColor, 0.16);
+      const tunic = body;
+      const tunicLight = shade(body, 0.2);
+      const tunicDark = shade(body, -0.3);
+      const skirt = 0xd4574c;
+      const skirtDark = shade(skirt, -0.28);
+      const skirtLight = shade(skirt, 0.16);
+      const hair = 0x8f4fc9;
+      const hairDark = shade(hair, -0.3);
+      const hairLight = shade(hair, 0.22);
+      const steel = STEEL;
+      const steelDark = shade(STEEL, -0.42);
+      const steelLight = shade(STEEL, 0.3);
+      const gold = accent;
+      const wood = 0x8a5a34;
+      const woodDark = shade(wood, -0.34);
+      const woodLight = shade(wood, 0.18);
+      const boot = 0x6b4527;
+      const bootDark = shade(boot, -0.32);
+      const skinShade = shade(SKIN, -0.16);
+
+      // Torso and head slide back with the kick; the legs stay planted.
+      const lean = recoil * h * 0.035;
+
+      // ------------------------------------------------------------ cape
+      // hangs from the left shoulder clasp and flares out behind the skirt
+      const capeFlare = recoil * h * 0.06;
+      g.poly([
+        -w * 0.2 - lean, -h * 0.76,
+        -w * 0.44 - lean, -h * 0.66,
+        -w * 0.62 - capeFlare, -h * 0.3,
+        -w * 0.7 - capeFlare * 1.4, -h * 0.04,
+        -w * 0.4, -h * 0.06,
+        -w * 0.24, -h * 0.3,
+        -w * 0.14 - lean, -h * 0.6,
+      ]).fill(capeDark);
+      g.poly([
+        -w * 0.21 - lean, -h * 0.74,
+        -w * 0.4 - lean, -h * 0.64,
+        -w * 0.5 - capeFlare, -h * 0.3,
+        -w * 0.52 - capeFlare * 1.4, -h * 0.08,
+        -w * 0.36, -h * 0.12,
+        -w * 0.22, -h * 0.36,
+      ]).fill(cape);
+      g.poly([
+        -w * 0.22 - lean, -h * 0.72,
+        -w * 0.34 - lean, -h * 0.62,
+        -w * 0.36 - capeFlare, -h * 0.34,
+        -w * 0.26, -h * 0.4,
+      ]).fill(capeLight);
+
+      // ------------------------------------------------------------ legs
+      // back leg braces against the recoil, front leg holds the stance
+      const backFootX = -w * 0.34 - recoil * h * 0.05;
+      g.roundRect(backFootX, -h * 0.26, w * 0.19, h * 0.19, h * 0.035).fill(tunicDark);
+      g.roundRect(backFootX - w * 0.03, -h * 0.11, w * 0.26, h * 0.11, h * 0.03).fill(bootDark);
+      g.rect(backFootX - w * 0.03, -h * 0.115, w * 0.26, h * 0.03).fill(shade(boot, 0.12));
+
+      g.roundRect(w * 0.02, -h * 0.27, w * 0.2, h * 0.2, h * 0.035).fill(tunic);
+      g.roundRect(w * 0.0, -h * 0.11, w * 0.28, h * 0.11, h * 0.03).fill(boot);
+      g.rect(w * 0.0, -h * 0.115, w * 0.28, h * 0.032).fill(shade(boot, 0.2));
+      g.rect(w * 0.0, -h * 0.035, w * 0.28, h * 0.035).fill(bootDark);
+
+      // ------------------------------------------------------- armour skirt
+      g.poly([
+        -w * 0.46 - lean * 0.4, -h * 0.2,
+        w * 0.46 - lean * 0.4, -h * 0.2,
+        w * 0.34 - lean * 0.4, -h * 0.48,
+        -w * 0.34 - lean * 0.4, -h * 0.48,
+      ]).fill(skirt);
+      g.poly([
+        -w * 0.3 - lean * 0.4, -h * 0.22,
+        w * 0.3 - lean * 0.4, -h * 0.22,
+        w * 0.24 - lean * 0.4, -h * 0.44,
+        -w * 0.24 - lean * 0.4, -h * 0.44,
+      ]).fill(skirtLight);
+      // scalloped hem
+      for (let i = -2; i <= 2; i++) {
+        g.circle(i * w * 0.19 - lean * 0.4, -h * 0.2, w * 0.095).fill(skirtDark);
+      }
+      g.rect(-w * 0.46 - lean * 0.4, -h * 0.235, w * 0.92, h * 0.035).fill(skirtDark);
+
+      // ------------------------------------------------------------ torso
+      g.roundRect(-w * 0.3 - lean, -h * 0.74, w * 0.6, h * 0.32, h * 0.06).fill(tunic);
+      g.roundRect(-w * 0.22 - lean, -h * 0.72, w * 0.4, h * 0.26, h * 0.05).fill(tunicLight);
+      // collar
+      g.roundRect(-w * 0.22 - lean, -h * 0.76, w * 0.44, h * 0.08, h * 0.03).fill(tunicDark);
+      // puffed sleeves
+      g.circle(-w * 0.3 - lean, -h * 0.68, h * 0.075).fill(tunic);
+      g.circle(-w * 0.31 - lean, -h * 0.695, h * 0.042).fill(tunicLight);
+      g.circle(w * 0.28 - lean, -h * 0.67, h * 0.08).fill(shade(body, 0.1));
+      g.circle(w * 0.29 - lean, -h * 0.685, h * 0.045).fill(tunicLight);
+      // cape clasp
+      g.circle(-w * 0.2 - lean, -h * 0.73, h * 0.036).fill(gold);
+      g.circle(-w * 0.2 - lean, -h * 0.73, h * 0.016).fill(shade(gold, 0.4));
+
+      // ------------------------------------------------------------- belt
+      g.rect(-w * 0.34 - lean * 0.7, -h * 0.47, w * 0.68, h * 0.06).fill(0x4a3120);
+      g.roundRect(-w * 0.08 - lean * 0.7, -h * 0.485, w * 0.16, h * 0.09, h * 0.015).fill(gold);
+      g.circle(0 - lean * 0.7, -h * 0.44, h * 0.018).fill(shade(gold, -0.35));
+      // powder pouch on the hip
+      g.roundRect(-w * 0.46 - lean * 0.7, -h * 0.44, w * 0.16, h * 0.14, h * 0.03).fill(0x6b4527);
+      g.rect(-w * 0.46 - lean * 0.7, -h * 0.4, w * 0.16, h * 0.026).fill(gold);
+
+      // ------------------------------------------------------------- musket
+      // Everything below is built in gun-local space (origin at the shoulder
+      // pivot, +x down the barrel) and mapped through gp() so the recoil can
+      // kick the whole weapon back and tip the muzzle up as one piece.
+      const gunPivotX = w * 0.1 - lean - recoil * h * 0.07;
+      const gunPivotY = -h * 0.55 - idle * h * 0.004;
+      const gunTilt = -0.09 - recoil * 0.26;
+      const gCos = Math.cos(gunTilt);
+      const gSin = Math.sin(gunTilt);
+      const gxp = (lx: number, ly: number) => gunPivotX + lx * gCos - ly * gSin;
+      const gyp = (lx: number, ly: number) => gunPivotY + lx * gSin + ly * gCos;
+      const gp = (pts: number[]) => {
+        const out: number[] = [];
+        for (let i = 0; i < pts.length; i += 2) out.push(gxp(pts[i], pts[i + 1]), gyp(pts[i], pts[i + 1]));
+        return out;
+      };
+
+      // back arm reaching for the forestock — upper half sits behind the gun,
+      // the hand itself is drawn again further down so it grips in front of it
+      const backHandX = gxp(h * 0.24, h * 0.055);
+      const backHandY = gyp(h * 0.24, h * 0.055);
+      g.moveTo(-w * 0.14 - lean, -h * 0.66)
+        .lineTo(backHandX, backHandY)
+        .stroke({ width: h * 0.072, color: tunicDark, cap: 'round' });
+
+      // butt stock
+      g.poly(gp([
+        -h * 0.34, -h * 0.005,
+        -h * 0.17, -h * 0.05,
+        -h * 0.02, -h * 0.055,
+        -h * 0.02, h * 0.055,
+        -h * 0.18, h * 0.08,
+        -h * 0.34, h * 0.105,
+      ])).fill(wood);
+      g.poly(gp([
+        -h * 0.32, h * 0.0,
+        -h * 0.17, -h * 0.035,
+        -h * 0.04, -h * 0.04,
+        -h * 0.04, -h * 0.005,
+        -h * 0.19, h * 0.015,
+        -h * 0.32, h * 0.04,
+      ])).fill(woodLight);
+      g.poly(gp([
+        -h * 0.36, -h * 0.005,
+        -h * 0.33, -h * 0.01,
+        -h * 0.33, h * 0.11,
+        -h * 0.36, h * 0.1,
+      ])).fill(steelDark);
+
+      // lock plate / receiver
+      g.poly(gp([
+        -h * 0.05, -h * 0.06,
+        h * 0.07, -h * 0.06,
+        h * 0.07, h * 0.05,
+        -h * 0.05, h * 0.05,
+      ])).fill(steelDark);
+      g.poly(gp([
+        -h * 0.03, -h * 0.045,
+        h * 0.05, -h * 0.045,
+        h * 0.05, h * 0.0,
+        -h * 0.03, h * 0.0,
+      ])).fill(steel);
+      // hammer / flint
+      g.poly(gp([
+        -h * 0.02, -h * 0.06,
+        h * 0.02, -h * 0.115 + recoil * h * 0.03,
+        h * 0.055, -h * 0.095 + recoil * h * 0.03,
+        h * 0.03, -h * 0.055,
+      ])).fill(steelDark);
+      // trigger guard
+      g.poly(gp([
+        -h * 0.01, h * 0.05,
+        h * 0.06, h * 0.05,
+        h * 0.06, h * 0.095,
+        h * 0.04, h * 0.105,
+        h * 0.0, h * 0.105,
+        -h * 0.02, h * 0.09,
+      ])).fill(steelDark);
+      g.poly(gp([
+        h * 0.005, h * 0.055,
+        h * 0.045, h * 0.055,
+        h * 0.045, h * 0.085,
+        h * 0.005, h * 0.085,
+      ])).fill(0x241c14);
+
+      // forestock and barrel
+      g.poly(gp([
+        h * 0.06, -h * 0.055,
+        h * 0.34, -h * 0.05,
+        h * 0.34, h * 0.05,
+        h * 0.06, h * 0.055,
+      ])).fill(wood);
+      g.poly(gp([
+        h * 0.06, -h * 0.05,
+        h * 0.34, -h * 0.045,
+        h * 0.34, -h * 0.012,
+        h * 0.06, -h * 0.015,
+      ])).fill(woodLight);
+      g.poly(gp([
+        h * 0.06, h * 0.03,
+        h * 0.34, h * 0.028,
+        h * 0.34, h * 0.05,
+        h * 0.06, h * 0.055,
+      ])).fill(woodDark);
+      // barrel bands
+      g.poly(gp([h * 0.14, -h * 0.062, h * 0.18, -h * 0.062, h * 0.18, h * 0.062, h * 0.14, h * 0.062])).fill(steelDark);
+      g.poly(gp([h * 0.3, -h * 0.06, h * 0.34, -h * 0.06, h * 0.34, h * 0.06, h * 0.3, h * 0.06])).fill(gold);
+
+      // flared blunderbuss muzzle
+      g.poly(gp([
+        h * 0.33, -h * 0.05,
+        h * 0.54, -h * 0.1,
+        h * 0.54, h * 0.1,
+        h * 0.33, h * 0.05,
+      ])).fill(steel);
+      g.poly(gp([
+        h * 0.33, -h * 0.042,
+        h * 0.54, -h * 0.085,
+        h * 0.54, -h * 0.02,
+        h * 0.33, -h * 0.012,
+      ])).fill(steelLight);
+      g.poly(gp([
+        h * 0.52, -h * 0.105,
+        h * 0.57, -h * 0.11,
+        h * 0.57, h * 0.11,
+        h * 0.52, h * 0.105,
+      ])).fill(steelDark);
+      g.poly(gp([
+        h * 0.545, -h * 0.095,
+        h * 0.565, -h * 0.098,
+        h * 0.565, h * 0.098,
+        h * 0.545, h * 0.095,
+      ])).fill(0x1a1a20);
+
+      // support hand wrapped around the forestock, in front of the barrel
+      g.circle(backHandX, backHandY, h * 0.05).fill(skinShade);
+      g.rect(backHandX - h * 0.045, backHandY - h * 0.052, h * 0.09, h * 0.03).fill(
+        shade(SKIN, -0.28),
+      );
+
+      // trigger arm on the grip, drawn over the stock
+      const gripX = gxp(h * 0.005, h * 0.03);
+      const gripY = gyp(h * 0.005, h * 0.03);
+      g.moveTo(w * 0.1 - lean, -h * 0.64)
+        .lineTo(gripX, gripY)
+        .stroke({ width: h * 0.078, color: tunic, cap: 'round' });
+      g.circle(w * 0.1 - lean, -h * 0.65, h * 0.052).fill(tunicLight);
+      g.circle(gripX, gripY, h * 0.052).fill(SKIN);
+      g.rect(gripX - h * 0.045, gripY - h * 0.055, h * 0.09, h * 0.03).fill(gold);
+
+      // ------------------------------------------------------------- head
+      const headX = -lean * 1.1;
+      const headY = -h * 0.86;
+      const headR = h * 0.155;
+      // the helmet brim rides at brow level — everything below it stays face
+      const brimY = headY - h * 0.055;
+
+      // neck
+      g.rect(headX - h * 0.04, headY + h * 0.09, h * 0.08, h * 0.06).fill(skinShade);
+
+      // hair volume behind the face
+      g.circle(headX - h * 0.02, headY + h * 0.03, headR * 1.18).fill(hair);
+      g.circle(headX - h * 0.16, headY + h * 0.07, h * 0.08).fill(hairDark);
+      g.circle(headX + h * 0.15, headY + h * 0.08, h * 0.072).fill(hairDark);
+
+      // face
+      g.circle(headX, headY, headR).fill(SKIN);
+      g.ellipse(headX + h * 0.05, headY + h * 0.04, h * 0.1, h * 0.11).fill(shade(SKIN, 0.09));
+
+      // signature purple ringlets framing the cheeks (three curls per side)
+      const curl = (cx: number, cy: number, r: number) => {
+        g.circle(cx, cy, r).fill(hair);
+        g.circle(cx - r * 0.22, cy - r * 0.22, r * 0.5).fill(hairLight);
+        g.circle(cx + r * 0.3, cy + r * 0.3, r * 0.42).fill(hairDark);
+      };
+      curl(headX - h * 0.155, headY - h * 0.015, h * 0.058);
+      curl(headX - h * 0.15, headY + h * 0.075, h * 0.05);
+      curl(headX - h * 0.105, headY + h * 0.14, h * 0.042);
+      curl(headX + h * 0.155, headY - h * 0.005, h * 0.056);
+      curl(headX + h * 0.15, headY + h * 0.085, h * 0.048);
+      curl(headX + h * 0.1, headY + h * 0.145, h * 0.04);
+      // fringe peeking out under the brim
+      g.circle(headX - h * 0.075, headY - h * 0.035, h * 0.045).fill(hair);
+      g.circle(headX + h * 0.075, headY - h * 0.035, h * 0.043).fill(hair);
+      g.circle(headX + h * 0.005, headY - h * 0.045, h * 0.045).fill(hairLight);
+
+      // eyes — green, wide, with a highlight
+      const eyeY = headY + h * 0.015;
+      g.ellipse(headX - h * 0.058, eyeY, h * 0.034, h * 0.042).fill(0xf7f2e8);
+      g.ellipse(headX + h * 0.062, eyeY, h * 0.032, h * 0.04).fill(0xf7f2e8);
+      g.circle(headX - h * 0.052, eyeY + h * 0.004, h * 0.024).fill(0x4c9a52);
+      g.circle(headX + h * 0.068, eyeY + h * 0.004, h * 0.023).fill(0x4c9a52);
+      g.circle(headX - h * 0.052, eyeY + h * 0.004, h * 0.013).fill(DARK_EYE);
+      g.circle(headX + h * 0.068, eyeY + h * 0.004, h * 0.012).fill(DARK_EYE);
+      g.circle(headX - h * 0.043, eyeY - h * 0.01, h * 0.009).fill(0xffffff);
+      g.circle(headX + h * 0.077, eyeY - h * 0.01, h * 0.009).fill(0xffffff);
+      // brows set in a determined squint while firing
+      const browDrop = flash * h * 0.014;
+      g.rect(headX - h * 0.085, eyeY - h * 0.045 + browDrop, h * 0.058, h * 0.015).fill(hairDark);
+      g.rect(headX + h * 0.04, eyeY - h * 0.047 + browDrop, h * 0.055, h * 0.015).fill(hairDark);
+      // nose + mouth
+      g.circle(headX + h * 0.018, eyeY + h * 0.045, h * 0.014).fill(skinShade);
+      g.ellipse(headX + h * 0.025, eyeY + h * 0.085, h * 0.026, h * 0.011 + flash * h * 0.012).fill(
+        0x8f3b46,
+      );
+
+      // ----------------------------------------------------------- helmet
+      // Dome is a sampled half-ellipse so it caps the head without ever
+      // spilling over the eyes the way a full ellipse would.
+      const domeRx = h * 0.185;
+      const domeRy = h * 0.165;
+      const dome: number[] = [];
+      for (let i = 0; i <= 18; i++) {
+        const a = Math.PI + (i / 18) * Math.PI;
+        dome.push(headX + Math.cos(a) * domeRx, brimY + Math.sin(a) * domeRy);
+      }
+      g.poly(dome).fill(steel);
+      const domeHi: number[] = [];
+      for (let i = 0; i <= 12; i++) {
+        const a = Math.PI * 1.08 + (i / 12) * Math.PI * 0.5;
+        domeHi.push(headX + Math.cos(a) * domeRx * 0.82, brimY + Math.sin(a) * domeRy * 0.86);
+      }
+      domeHi.push(headX - domeRx * 0.1, brimY - domeRy * 0.2);
+      g.poly(domeHi).fill(steelLight);
+      // brim: flat band that dips forward into a small peak
+      g.poly([
+        headX - domeRx * 1.12, brimY - h * 0.018,
+        headX + domeRx * 1.12, brimY - h * 0.018,
+        headX + domeRx * 1.24, brimY + h * 0.022,
+        headX + domeRx * 0.9, brimY + h * 0.038,
+        headX - domeRx * 0.95, brimY + h * 0.034,
+        headX - domeRx * 1.2, brimY + h * 0.016,
+      ]).fill(steelDark);
+      g.poly([
+        headX - domeRx * 1.1, brimY - h * 0.022,
+        headX + domeRx * 1.1, brimY - h * 0.022,
+        headX + domeRx * 1.14, brimY - h * 0.001,
+        headX - domeRx * 1.12, brimY - h * 0.002,
+      ]).fill(steel);
+      g.rect(headX - domeRx * 1.02, brimY - h * 0.042, domeRx * 2.04, h * 0.018).fill(gold);
+      // rivets
+      g.circle(headX - domeRx * 0.62, brimY - h * 0.008, h * 0.012).fill(steelDark);
+      g.circle(headX + domeRx * 0.62, brimY - h * 0.008, h * 0.012).fill(steelDark);
+      // crest ridge running over the crown
+      g.poly([
+        headX - h * 0.025, brimY - domeRy * 1.02,
+        headX + h * 0.03, brimY - domeRy * 0.99,
+        headX + h * 0.02, brimY - domeRy * 0.55,
+        headX - h * 0.035, brimY - domeRy * 0.58,
+      ]).fill(steelDark);
+
+      // ------------------------------------------------------------ plume
+      // whips backwards on the kick, drifts gently the rest of the time
+      const plumeSway = recoil * h * 0.15 + idle * h * 0.02;
+      const plumeBaseX = headX + h * 0.015;
+      const plumeBaseY = brimY - domeRy * 0.98;
+      // The feather is built along a curved spine so the barbs stay attached
+      // to it while the tip whips back; `t` walks base -> tip.
+      const plumeLen = h * 0.26;
+      const spineX = (t: number) => plumeBaseX + h * 0.05 * t - plumeSway * t * t * 1.35;
+      const spineY = (t: number) => plumeBaseY - plumeLen * t;
+      const plumeWidth = (t: number) => h * 0.075 * Math.sin(Math.min(1, t * 1.05) * Math.PI) ** 0.65;
+      const feather = (scaleW: number, color: number) => {
+        const pts: number[] = [];
+        // barbs down one edge...
+        for (let i = 0; i <= 7; i++) {
+          const t = i / 7;
+          const notch = i % 2 === 0 ? 1 : 0.74;
+          pts.push(spineX(t) + plumeWidth(t) * scaleW * notch, spineY(t));
+        }
+        // ...and back up the other
+        for (let i = 7; i >= 0; i--) {
+          const t = i / 7;
+          const notch = i % 2 === 0 ? 0.78 : 1;
+          pts.push(spineX(t) - plumeWidth(t) * scaleW * notch, spineY(t));
+        }
+        g.poly(pts).fill(color);
+      };
+      feather(1, capeDark);
+      feather(0.72, cape);
+      // quill
+      g.moveTo(spineX(0), spineY(0))
+        .quadraticCurveTo(spineX(0.5), spineY(0.5), spineX(1), spineY(1))
+        .stroke({ width: h * 0.013, color: capeLight, cap: 'round' });
+
+      // ------------------------------------------------- muzzle blast + smoke
+      const fxg = opts?.fx ?? g;
+      const muzzleX = gxp(h * 0.6, 0);
+      const muzzleY = gyp(h * 0.6, 0);
+      const dirX = gCos;
+      const dirY = gSin;
+      const perpX = -gSin;
+      const perpY = gCos;
+
+      if (smokeAge >= 0) {
+        // puffs drifting off the barrel and rising as the shot settles
+        for (let i = 0; i < 4; i++) {
+          const spread = smokeAge * (0.4 + i * 0.32);
+          const px = muzzleX + dirX * h * (0.08 + spread * 0.46) + perpX * h * (i - 1.5) * 0.045;
+          const py =
+            muzzleY +
+            dirY * h * (0.08 + spread * 0.46) +
+            perpY * h * (i - 1.5) * 0.045 -
+            smokeAge * h * (0.05 + i * 0.02);
+          const pr = h * (0.045 + spread * 0.1);
+          const pa = Math.min(1, smokeAge * 5) * (1 - smokeAge) * (0.85 - i * 0.13);
+          if (pa > 0.01) {
+            fxg.circle(px, py, pr).fill({ color: 0xbfbcb4, alpha: pa * 0.75 });
+            fxg.circle(px - pr * 0.28, py - pr * 0.3, pr * 0.6).fill({ color: 0xf6f4ef, alpha: pa });
+          }
+        }
+      }
+
+      if (flash > 0.01) {
+        const fl = h * (0.14 + flash * 0.26);
+        // rotate a local (forward, side) offset into world space
+        const fx = (fwd: number, side: number) => muzzleX + dirX * fwd + perpX * side;
+        const fy = (fwd: number, side: number) => muzzleY + dirY * fwd + perpY * side;
+        // outer bloom
+        fxg.circle(fx(fl * 0.4, 0), fy(fl * 0.4, 0), fl * 0.7).fill({
+          color: 0xff8a2a,
+          alpha: flash * 0.4,
+        });
+        // ragged star burst — long forward tongue, shorter side tongues
+        const spikes: Array<[number, number]> = [
+          [1.5, 0], [1.0, 0.5], [0.55, 0.78], [0.15, 0.62],
+          [-0.18, 0.3], [-0.18, -0.3], [0.15, -0.62], [0.55, -0.78], [1.0, -0.5],
+        ];
+        const burst: number[] = [];
+        for (let i = 0; i < spikes.length; i++) {
+          const [f0, s0] = spikes[i];
+          const [f1, s1] = spikes[(i + 1) % spikes.length];
+          burst.push(fx(f0 * fl, s0 * fl), fy(f0 * fl, s0 * fl));
+          // pull the midpoint in so the outline reads as flame points
+          burst.push(fx((f0 + f1) * 0.5 * fl * 0.42, (s0 + s1) * 0.5 * fl * 0.42),
+            fy((f0 + f1) * 0.5 * fl * 0.42, (s0 + s1) * 0.5 * fl * 0.42));
+        }
+        fxg.poly(burst).fill({ color: 0xffa32c, alpha: 0.92 });
+        // hot inner core
+        const core: number[] = [];
+        for (let i = 0; i < spikes.length; i++) {
+          const [f0, s0] = spikes[i];
+          core.push(fx(f0 * fl * 0.58, s0 * fl * 0.58), fy(f0 * fl * 0.58, s0 * fl * 0.58));
+        }
+        fxg.poly(core).fill({ color: 0xffdb63, alpha: 0.95 });
+        fxg.circle(fx(fl * 0.22, 0), fy(fl * 0.22, 0), fl * 0.3).fill({ color: 0xfff8d8, alpha: 0.95 });
+        // sparks flung ahead of the blast
+        for (let i = 0; i < 5; i++) {
+          const side = (i - 2) * 0.34;
+          const fwd = fl * (1.25 + (i % 2) * 0.45);
+          fxg.circle(fx(fwd, side * fl * 0.85), fy(fwd, side * fl * 0.85), fl * 0.08).fill({
+            color: 0xfff0b0,
+            alpha: flash * 0.9,
+          });
+        }
+      }
       break;
     }
 
@@ -2312,26 +2711,84 @@ export function drawTower(
 
   if (destroyed) {
     g.ellipse(0, 0, w * 0.5, h * 0.14).fill({ color: 0x000000, alpha: 0.22 });
+    // scorched ground under the wreck
+    g.ellipse(0, 0, w * 0.46, h * 0.12).fill({ color: 0x3a2f22, alpha: 0.45 });
     g.roundRect(-w * 0.42, -h * 0.26, w * 0.4, h * 0.26, 3).fill(stoneDark);
     g.roundRect(-w * 0.05, -h * 0.36, w * 0.34, h * 0.36, 3).fill(stoneMid);
     g.roundRect(w * 0.16, -h * 0.16, w * 0.26, h * 0.16, 3).fill(stoneDark);
     g.circle(-w * 0.3, -h * 0.32, tile * 0.16).fill(stoneMid);
+    // loose blocks thrown clear of the base
+    for (const [bx, by, bs] of [
+      [-w * 0.56, -h * 0.06, 0.13],
+      [w * 0.5, -h * 0.09, 0.16],
+      [w * 0.34, -h * 0.03, 0.1],
+    ] as const) {
+      g.roundRect(bx, by, tile * bs * 2, tile * bs * 1.4, 2).fill(stoneDark);
+    }
+    // a torn scrap of the team banner still pinned to the rubble
+    g.poly([
+      -w * 0.02, -h * 0.4,
+      w * 0.14, -h * 0.44,
+      w * 0.1, -h * 0.28,
+      -w * 0.04, -h * 0.26,
+    ]).fill({ color: shade(teamColor, -0.35), alpha: 0.9 });
     return;
   }
 
   g.ellipse(0, 0, w * 0.55, h * 0.13).fill({ color: 0x000000, alpha: 0.25 });
   g.roundRect(-w / 2, -h, w, h, tile * 0.16).fill(stone);
-  g.rect(-w / 2, -h * 0.22, w, h * 0.22).fill(stoneMid);
-  g.rect(-w / 2, -h * 0.06, w, h * 0.06).fill(stoneDark);
+
+  // --- masonry: staggered courses of individual blocks ----------------------
+  const courseH = h / 5;
+  for (let row = 0; row < 5; row++) {
+    const yTop = -h + row * courseH;
+    const offset = row % 2 === 0 ? 0 : w / 6;
+    for (let col = -1; col < 4; col++) {
+      const bx = -w / 2 + offset + col * (w / 3);
+      const bw = w / 3;
+      const x0 = Math.max(-w / 2, bx);
+      const x1 = Math.min(w / 2, bx + bw - tile * 0.05);
+      if (x1 <= x0) continue;
+      // deterministic per-block tone so the wall has grain but never flickers
+      const t = Math.abs(Math.sin((row * 7 + col * 3.7) * 12.9898)) % 1;
+      g.rect(x0, yTop, x1 - x0, courseH - tile * 0.05).fill({
+        color: t > 0.72 ? stoneMid : t > 0.4 ? stone : shade(stone, 0.06),
+      });
+    }
+  }
+  // light from the upper left, shade down the right flank and along the base
+  g.rect(-w / 2, -h, w * 0.16, h).fill({ color: 0xffffff, alpha: 0.1 });
+  g.rect(w * 0.3, -h, w * 0.2, h).fill({ color: 0x000000, alpha: 0.12 });
+  g.rect(-w / 2, -h * 0.1, w, h * 0.1).fill({ color: 0x000000, alpha: 0.16 });
 
   const merlons = kind === 'king' ? 5 : 4;
   const mw = w / merlons;
   for (let i = 0; i < merlons; i++) {
-    g.rect(-w / 2 + i * mw + mw * 0.12, -h - merlon, mw * 0.76, merlon).fill(stone);
+    const mx = -w / 2 + i * mw + mw * 0.12;
+    g.rect(mx, -h - merlon, mw * 0.76, merlon).fill(stone);
+    g.rect(mx, -h - merlon, mw * 0.76, merlon * 0.26).fill(shade(stone, 0.18));
+    g.rect(mx + mw * 0.6, -h - merlon, mw * 0.16, merlon).fill({ color: 0x000000, alpha: 0.12 });
   }
 
-  g.roundRect(-w * 0.28, -h * 0.84, w * 0.56, h * 0.44, tile * 0.1).fill(teamColor);
-  g.roundRect(-w * 0.28, -h * 0.84, w * 0.56, h * 0.12, tile * 0.08).fill(shade(teamColor, 0.22));
+  // --- team banner hanging off the battlements ------------------------------
+  const banW = w * 0.5;
+  const banH = h * 0.5;
+  const banY = -h * 0.86;
+  g.roundRect(-banW / 2, banY, banW, banH * 0.9, tile * 0.05).fill(teamColor);
+  g.roundRect(-banW / 2, banY, banW, banH * 0.2, tile * 0.05).fill(shade(teamColor, 0.24));
+  // notched hem, the way a pennant is cut
+  g.poly([
+    -banW / 2, banY + banH * 0.9,
+    -banW / 6, banY + banH * 0.9,
+    0, banY + banH * 0.68,
+    banW / 6, banY + banH * 0.9,
+    banW / 2, banY + banH * 0.9,
+    banW / 2, banY + banH * 1.12,
+    0, banY + banH * 0.9,
+    -banW / 2, banY + banH * 1.12,
+  ]).fill(shade(teamColor, -0.14));
+  // crossbar it hangs from
+  g.rect(-banW * 0.62, banY - tile * 0.08, banW * 1.24, tile * 0.11).fill(0x6b5540);
 
   // the character standing on the battlements
   if (kind === 'king') {

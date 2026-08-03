@@ -12,7 +12,15 @@ export const ARENA = {
   riverBottom: 16.6,
   bridgeLeftX: 3.5,
   bridgeRightX: 14.5,
-  bridgeHalfWidth: 1.05,
+  bridgeHalfWidth: 1.5,
+  /**
+   * No-deploy box around a live enemy king tower: 9 tiles wide by 5 tall,
+   * centred on the tower. Once a princess falls the whole lane opens up, and
+   * without this you could drop troops on top of — or behind — the king faster
+   * than it can get a shot away. Spells and global cards ignore it.
+   */
+  kingDeployBlockHalfW: 4.5,
+  kingDeployBlockHalfH: 2.5,
 } as const;
 
 /** Vertical squash used by the renderer — tower muzzle math stays aligned with sprites. */

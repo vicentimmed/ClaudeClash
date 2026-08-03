@@ -5,6 +5,8 @@
  * this class owns and toggles with a `.show` class.
  */
 
+import { HomeBackground } from '../render/home-background';
+
 export interface HomeCallbacks {
   onPlayLocal: () => void;
   onPlayOnline: () => void;
@@ -13,10 +15,13 @@ export interface HomeCallbacks {
 export class HomeScreen {
   private el: HTMLElement;
   private noteEl!: HTMLElement;
+  private bg = new HomeBackground();
+  private bgReady: Promise<void>;
 
   constructor(private cb: HomeCallbacks) {
     this.el = document.getElementById('home')!;
     this.el.innerHTML = `
+      <div class="home-bg" data-role="bg"></div>
       <div class="home-inner">
         <h1 class="home-title">ClaudeClash</h1>
         <p class="home-sub">Escolha como quer jogar</p>
@@ -30,6 +35,8 @@ export class HomeScreen {
     this.noteEl = q('note');
     q<HTMLButtonElement>('local').addEventListener('click', () => this.cb.onPlayLocal());
     q<HTMLButtonElement>('online').addEventListener('click', () => this.cb.onPlayOnline());
+
+    this.bgReady = this.bg.init(q('bg'));
   }
 
   /** Used to explain why the player was bounced back here. */
@@ -41,9 +48,11 @@ export class HomeScreen {
   open(note = '') {
     this.setNote(note);
     this.el.classList.add('show');
+    void this.bgReady.then(() => this.bg.start());
   }
 
   close() {
     this.el.classList.remove('show');
+    this.bg.stop();
   }
 }

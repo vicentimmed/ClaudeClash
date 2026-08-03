@@ -27,6 +27,8 @@ const ICON_SOUND_ON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="cur
 const ICON_SOUND_OFF = `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9l6 6M22 9l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 const ICON_TUNE = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2.2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2.2" fill="currentColor" stroke="none"/><circle cx="8" cy="17" r="2.2" fill="currentColor" stroke="none"/></svg>`;
 const ICON_CARDS = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="8" height="14" rx="1.5"/><rect x="13" y="5" width="8" height="14" rx="1.5"/></svg>`;
+/** Three-point crown — replaces the square pip the score used to show. */
+const ICON_CROWN = `<svg viewBox="0 0 24 20" width="13" height="11" fill="currentColor" aria-hidden="true"><path d="M2 17h20l1.5-13-6.5 5L12 2 6.9 9 1 4z"/></svg>`;
 
 const RESULT_TEXT: Record<MatchResult, { title: string; sub: string; color: string }> = {
   win: { title: 'Vitória!', sub: 'Você derrubou mais torres.', color: '#7ad06a' },
@@ -62,9 +64,14 @@ export class Ui {
   private pips: HTMLElement[] = [];
 
   private cardEls: HTMLButtonElement[] = [];
+  /** Last affordability of each hand slot, to detect the moment one unlocks. */
+  private cardLocked: (boolean | undefined)[] = [];
   private handSignature = '';
   private nextSignature = '';
   private artCache = new Map<string, string>();
+
+  private confetti: HTMLElement | null = null;
+  private confettiTimer: number | null = null;
 
   /** true while a card is being dragged, to swallow the trailing synthetic click */
   private suppressClick = false;
@@ -124,7 +131,7 @@ export class Ui {
     this.speedBadge = q('speed');
     this.soundBtn = q<HTMLButtonElement>('sound');
     for (const box of [this.crownsEnemy, this.crownsSelf]) {
-      box.innerHTML = '<i class="crown-dot"></i>'.repeat(3);
+      box.innerHTML = `<i class="crown-dot">${ICON_CROWN}</i>`.repeat(3);
     }
     this.soundBtn.addEventListener('click', () => this.cb.onToggleSound());
     q<HTMLButtonElement>('deck').addEventListener('click', () => this.cb.onEditDeck());
@@ -388,7 +395,13 @@ export class Ui {
     this.elixirMode.classList.toggle('triple', isTriple);
 
     hand.hand.forEach((cardId, i) => {
-      this.cardEls[i].classList.toggle('locked', this.balance.cards[cardId].cost > elixir);
+      const el = this.cardEls[i];
+      const locked = this.balance.cards[cardId].cost > elixir;
+      // Flash only on the transition into "affordable" — re-adding the class
+      // every frame would restart the animation and freeze it on frame 0.
+      if (this.cardLocked[i] === true && !locked) this.pulseReady(el);
+      this.cardLocked[i] = locked;
+      el.classList.toggle('locked', locked);
     });
 
     this.timerValue.textContent = fmtTime(world.timeLeft);
@@ -397,6 +410,14 @@ export class Ui {
 
     this.paintCrowns(this.crownsSelf, world.crowns[0]);
     this.paintCrowns(this.crownsEnemy, world.crowns[1]);
+  }
+
+  /** Restart the "just became playable" glow on a hand card. */
+  private pulseReady(el: HTMLElement) {
+    el.classList.remove('just-ready');
+    // reading offsetWidth forces the style flush that lets the class re-trigger
+    void el.offsetWidth;
+    el.classList.add('just-ready');
   }
 
   private paintCrowns(box: HTMLElement, count: number) {
@@ -431,6 +452,44 @@ export class Ui {
     auto.textContent = opts?.autoText ?? '';
 
     this.overlay.classList.add('show');
+    if (result === 'win') this.showConfetti(threeCrowns ? 70 : 44);
+  }
+
+  /**
+   * Purely decorative celebration on a win. The pieces are plain divs driven by
+   * a CSS keyframe and removed once the longest one has landed, so nothing
+   * keeps animating behind the next match.
+   */
+  private showConfetti(count: number) {
+    this.clearConfetti();
+    const box = document.createElement('div');
+    box.className = 'confetti';
+    const colors = ['#e8c45a', '#3b7dd8', '#7ad06a', '#e04bb0', '#f0e3c8'];
+    let longest = 0;
+    for (let i = 0; i < count; i++) {
+      const bit = document.createElement('i');
+      const dur = 1.6 + Math.random() * 1.6;
+      const delay = Math.random() * 0.9;
+      longest = Math.max(longest, dur + delay);
+      bit.style.left = `${Math.random() * 100}%`;
+      bit.style.background = colors[i % colors.length];
+      bit.style.animationDuration = `${dur}s`;
+      bit.style.animationDelay = `${delay}s`;
+      bit.style.opacity = String(0.7 + Math.random() * 0.3);
+      box.appendChild(bit);
+    }
+    this.overlay.appendChild(box);
+    this.confetti = box;
+    this.confettiTimer = window.setTimeout(() => this.clearConfetti(), longest * 1000 + 200);
+  }
+
+  private clearConfetti() {
+    if (this.confettiTimer !== null) {
+      clearTimeout(this.confettiTimer);
+      this.confettiTimer = null;
+    }
+    this.confetti?.remove();
+    this.confetti = null;
   }
 
   /** Online matches hide the buttons that would yank you out of a live game. */
@@ -440,5 +499,6 @@ export class Ui {
 
   hideResult() {
     this.overlay.classList.remove('show');
+    this.clearConfetti();
   }
 }

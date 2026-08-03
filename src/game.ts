@@ -19,6 +19,7 @@ import { Bot } from './sim/bot';
 import type { Balance, CardDef, Effect } from './sim/types';
 import { Hand, World } from './sim/world';
 import { AdminPanel } from './ui/admin';
+import { CountdownOverlay } from './ui/countdown';
 import { DeckBuilder, type PresenceInfo } from './ui/deck';
 import { HomeScreen } from './ui/home';
 import { Ui, type HandView } from './ui/hud';
@@ -68,6 +69,7 @@ export class Game {
 
   private stage!: HTMLElement;
   private hint!: HTMLElement;
+  private countdown!: CountdownOverlay;
 
   async start() {
     this.stage = document.getElementById('stage')!;
@@ -77,6 +79,8 @@ export class Game {
     this.hint.className = 'hint';
     this.hint.style.display = 'none';
     this.stage.appendChild(this.hint);
+
+    this.countdown = new CountdownOverlay(this.stage);
 
     this.ui = new Ui(this.balance, (cardId, size) => this.makeArt(cardId, size), {
       onSelectCard: (index) => this.onSelectCard(index),
@@ -183,6 +187,7 @@ export class Game {
     this.online.inMatch = false;
     this.net?.leave();
     this.net = null;
+    this.countdown.cancel();
     this.deckBuilder.setPresence(null);
     this.deckBuilder.close();
     this.ui.hideResult();
@@ -232,6 +237,7 @@ export class Game {
   private openOnlineLobby() {
     this.running = false;
     this.online.inMatch = false;
+    this.countdown.cancel();
     this.ui.hideResult();
     this.ui.clearSelection();
     this.renderer.zoneMode = 'none';
@@ -274,13 +280,19 @@ export class Game {
   }
 
   private onServerMessage(msg: ServerMsg) {
+    // A message can still be in flight when we leave online mode (leave()
+    // closes the socket, but a message already queued by the browser fires
+    // its 'message' event anyway) — ignore anything that arrives once we're
+    // no longer online, or it'll reopen the online lobby over local play.
+    if (this.mode !== 'online') return;
     switch (msg.t) {
       case 'helloAck':
         // The server's card data wins — never the locally edited balance.
         this.applyServerBalance(msg.balance);
         // Reconnecting into a match already in progress: drop straight into it
-        // instead of waiting for a `matchStart` that will never come again.
-        if (msg.resuming) this.beginOnlineMatch();
+        // instead of waiting for a `matchStart` that will never come again —
+        // no countdown, the match (and the countdown itself) already happened.
+        if (msg.resuming) this.beginOnlineMatch({ countdown: false });
         break;
 
       case 'roomFull':
@@ -335,24 +347,34 @@ export class Game {
     this.deckBuilder.setBalance(balance);
   }
 
-  private beginOnlineMatch() {
+  private beginOnlineMatch(opts: { countdown?: boolean } = {}) {
+    const withCountdown = opts.countdown ?? true;
     this.deckBuilder.close();
-    this.online.inMatch = true;
+    this.online.inMatch = !withCountdown;
     this.online.selfReady = false;
     this.resultShown = false;
     this.wasElixirFull = false;
     this.lastTimerTick = -1;
     // A throwaway world the snapshots write into; the renderer draws from it.
+    // Keep its freshly-spawned towers (kings included) so the arena isn't
+    // empty while the countdown runs and the first snapshot is still on its
+    // way — the server holds off ticking until the same countdown ends.
     this.world = new World(this.balance);
-    this.world.entities = [];
     this.online.lastSnapshotAt = performance.now();
     this.renderer.clear();
     this.renderer.zoneMode = 'none';
     this.ui.hideResult();
     this.ui.clearSelection();
-    this.running = true;
+    this.running = !withCountdown;
     void this.audio.unlock().then(() => {
       if (this.audio.musicOn) this.audio.startMusic('battle', { force: true });
+    });
+    if (!withCountdown) return;
+    this.runCountdown(() => {
+      // The player may have left online mode while the count was running.
+      if (this.mode !== 'online') return;
+      this.online.inMatch = true;
+      this.running = true;
     });
   }
 
@@ -401,6 +423,7 @@ export class Game {
 
   private openDeckBuilder() {
     this.running = false;
+    this.countdown.cancel();
     this.ui.hideResult();
     this.ui.clearSelection();
     this.renderer.zoneMode = 'none';
@@ -418,10 +441,23 @@ export class Game {
     saveDeck(deck);
     this.deckBuilder.close();
     this.newMatch(deck);
-    this.running = true;
     void this.audio.unlock().then(() => {
       if (this.audio.musicOn) this.audio.startMusic('battle', { force: true });
     });
+    this.runCountdown(() => {
+      // The player may have bailed to the deck screen or home while counting.
+      if (this.mode !== 'local') return;
+      this.running = true;
+    });
+  }
+
+  /** Runs the shared 3-2-1 countdown with its per-number sound effect. */
+  private runCountdown(onDone: () => void) {
+    this.countdown.start(
+      (n) =>
+        this.audio.play(n === 1 ? 'matchCountdown1' : n === 2 ? 'matchCountdown2' : 'matchCountdown3'),
+      onDone,
+    );
   }
 
   private newMatch(deck: string[]) {
@@ -645,6 +681,19 @@ export class Game {
     // server's clock, so they must not touch it.
     const dt = this.mode === 'online' ? rawDt : rawDt * this.gameSpeed;
 
+    // A tower going down (or a fireball landing) freezes the simulation for a
+    // few frames. The renderer keeps animating through it — only the world
+    // stops, which is what makes the impact land. Online runs on the server's
+    // clock, so it never freezes.
+    if (this.renderer.hitStop > 0 && this.mode === 'local') {
+      this.renderer.hitStop = Math.max(0, this.renderer.hitStop - rawDt);
+      this.playEffectSounds(this.world.effects);
+      this.renderer.draw(this.world, this.renderAlpha(), rawDt);
+      this.ui.update(this.world, this.hand);
+      return;
+    }
+    this.renderer.hitStop = 0;
+
     if (this.mode === 'local' && this.running && this.world.phase !== 'over') {
       this.acc += dt;
       let guard = 0;
@@ -660,6 +709,7 @@ export class Game {
     }
 
     this.playEffectSounds(this.world.effects);
+    this.syncMusicIntensity();
     this.renderer.draw(this.world, this.renderAlpha(), dt);
     this.ui.update(this.world, this.hand);
 
@@ -672,6 +722,24 @@ export class Game {
       this.audio.play(result === 'lose' ? 'lose' : 'win');
       setTimeout(() => this.ui.showResult(result, this.world.crowns), 900);
     }
+  }
+
+  /**
+   * Elixir dobrado é o ponto em que a partida vira — a trilha acompanha,
+   * acelerando e ganhando camadas. O nível é recalculado todo frame mas
+   * `setMusicIntensity` ignora repetições, então isso é barato.
+   */
+  private syncMusicIntensity() {
+    if (!this.running || this.world.phase === 'over') {
+      this.audio.setMusicIntensity(0);
+      this.renderer.tension = 0;
+      return;
+    }
+    const base = this.world.b.global.elixirRateSec;
+    const rate = this.world.elixirRate();
+    const level = rate <= base / 3 + 1e-6 ? 2 : rate < base - 1e-6 ? 1 : 0;
+    this.audio.setMusicIntensity(level);
+    this.renderer.tension = level;
   }
 
   /**
