@@ -12,11 +12,11 @@ import { loadDevSettings, saveDevSettings, type SpeedMultiplier } from './dev/se
 import { NetworkClient, type NetStatus } from './net/client';
 import type { ServerMsg } from './net/protocol';
 import { Renderer } from './render/renderer';
-import { drawUnit } from './render/shapes';
+import { drawUnit, TEAM_COLOR } from './render/shapes';
 import { getCharacterIdleFrame, isCharacterLoaded } from './render/sprites/character-loader';
 import { Bot } from './sim/ai/bot';
 import { pickBotDeck } from './sim/ai/decks';
-import type { Balance, CardDef, Effect } from './sim/types';
+import type { Balance, CardDef, Effect, MatchResult } from './sim/types';
 import { Hand, World } from './sim/world';
 import { AdminPanel } from './ui/admin';
 import { CountdownOverlay } from './ui/countdown';
@@ -59,6 +59,8 @@ export class Game {
   private acc = 0;
   private stepSec = 0.05;
   private resultShown = false;
+  /** Plateia comemora só na primeira carta jogada em campo por partida. */
+  private firstDeployCheered = false;
   private wasElixirFull = false;
   private lastTimerTick = -1;
   private running = false;
@@ -363,6 +365,7 @@ export class Game {
     this.online.inMatch = !withCountdown;
     this.online.selfReady = false;
     this.resultShown = false;
+    this.firstDeployCheered = !withCountdown;
     this.wasElixirFull = false;
     this.lastTimerTick = -1;
     // A throwaway world the snapshots write into; the renderer draws from it.
@@ -415,6 +418,7 @@ export class Game {
     this.renderer.zoneMode = 'none';
     this.renderer.deployPreview = null;
     this.hint.style.display = 'none';
+    this.celebrateCrowdForResult(msg.result);
     this.audio.play(msg.result === 'lose' ? 'lose' : 'win');
 
     const goingHome = msg.routeTo === 'home';
@@ -483,6 +487,7 @@ export class Game {
     this.stepSec = 1 / this.balance.global.tickRate;
     this.acc = 0;
     this.resultShown = false;
+    this.firstDeployCheered = false;
     this.wasElixirFull = false;
     this.lastTimerTick = -1;
     this.renderer.clear();
@@ -533,6 +538,22 @@ export class Game {
     this.crowdEnabled = enabled;
     this.renderer.setCrowdEnabled(enabled);
     this.persistDevSettings();
+  }
+
+  /** Ola da plateia a partir de um ponto do tabuleiro. */
+  private celebrateCrowd(tileX: number, tileY: number, confettiColor = 0xe8c45a) {
+    if (!this.crowdEnabled) return;
+    this.renderer.celebrateCrowd(tileX, tileY, confettiColor);
+    this.audio.play('crowdCheer');
+  }
+
+  /** Ola da plateia ao fim da partida; confete na cor de quem venceu. */
+  private celebrateCrowdForResult(result: MatchResult) {
+    if (!this.crowdEnabled) return;
+    const confettiColor =
+      result === 'win' ? TEAM_COLOR[0] : result === 'lose' ? TEAM_COLOR[1] : 0xe8c45a;
+    this.renderer.celebrateCrowd(undefined, undefined, confettiColor);
+    this.audio.play('crowdCheer');
   }
 
   private persistDevSettings() {
@@ -730,6 +751,7 @@ export class Game {
       this.renderer.zoneMode = 'none';
       this.hint.style.display = 'none';
       const result = this.world.result ?? 'draw';
+      this.celebrateCrowdForResult(result);
       this.audio.play(result === 'lose' ? 'lose' : 'win');
       setTimeout(() => this.ui.showResult(result, this.world.crowns), 900);
     }
@@ -777,13 +799,25 @@ export class Game {
     this.lastTimerTick = secs;
   }
 
+  private matchActive(): boolean {
+    return this.mode === 'local' ? this.running : this.online.inMatch;
+  }
+
   /** The renderer drains `effects`, so read them just before it does. */
   private playEffectSounds(effects: Effect[]) {
-    let cheered = false;
+    let towerCheered = false;
     for (const fx of effects) {
       switch (fx.type) {
         case 'deploy':
           this.audio.play('deploy');
+          if (
+            !this.firstDeployCheered &&
+            this.matchActive() &&
+            this.world.phase !== 'over'
+          ) {
+            this.firstDeployCheered = true;
+            this.celebrateCrowd(fx.x, fx.y);
+          }
           break;
         case 'hit':
           this.audio.play('melee');
@@ -797,8 +831,8 @@ export class Game {
         case 'towerDown':
           this.audio.play('towerDown');
           // duas torres caindo no mesmo frame não somam duas plateias
-          if (!cheered) {
-            cheered = true;
+          if (!towerCheered) {
+            towerCheered = true;
             if (this.crowdEnabled) this.audio.play('crowdCheer');
           }
           break;

@@ -218,6 +218,9 @@ export class Ui {
 
     btn.addEventListener('pointerdown', (ev) => {
       if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      // Evita scroll/seleção nativos no toque — sem isso o arrastar morre no mobile.
+      ev.preventDefault();
+
       this.dragState = {
         index,
         pointerId: ev.pointerId,
@@ -225,45 +228,60 @@ export class Ui {
         startY: ev.clientY,
         dragging: false,
       };
-      // Capture keeps pointermove/up coming to this button even once the
-      // cursor is out over the arena.
-      btn.setPointerCapture(ev.pointerId);
-    });
 
-    btn.addEventListener('pointermove', (ev) => {
-      const d = this.dragState;
-      if (!d || d.index !== index || d.pointerId !== ev.pointerId) return;
-      if (!d.dragging) {
-        const moved = Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY);
-        if (moved < THRESHOLD) return;
-        d.dragging = true;
-        this.suppressClick = true;
-        this.selected = index;
-        this.refreshSelection();
-        this.cb.onSelectCard(index);
-        this.createGhost(index, ev.clientX, ev.clientY);
+      try {
+        btn.setPointerCapture(ev.pointerId);
+      } catch {
+        /* capture pode falhar; os listeners no window cobrem */
       }
-      this.moveGhost(ev.clientX, ev.clientY);
-    });
 
-    const release = (ev: PointerEvent) => {
-      const d = this.dragState;
-      if (!d || d.index !== index || d.pointerId !== ev.pointerId) return;
-      if (d.dragging) {
-        this.destroyGhost();
-        this.cb.onDragRelease(ev.clientX, ev.clientY);
-        // The browser normally synthesizes a `click` right after this pointerup,
-        // which is what actually consumes suppressClick. If it doesn't fire —
-        // some platforms skip it after a long drag — self-heal on the next
-        // tick so an unrelated tap on another card never gets eaten.
-        setTimeout(() => {
-          this.suppressClick = false;
-        }, 0);
-      }
-      this.dragState = null;
-    };
-    btn.addEventListener('pointerup', release);
-    btn.addEventListener('pointercancel', release);
+      const onMove = (moveEv: PointerEvent) => {
+        const d = this.dragState;
+        if (!d || d.index !== index || d.pointerId !== moveEv.pointerId) return;
+        if (!d.dragging) {
+          const moved = Math.hypot(moveEv.clientX - d.startX, moveEv.clientY - d.startY);
+          if (moved < THRESHOLD) return;
+          d.dragging = true;
+          this.suppressClick = true;
+          this.selected = index;
+          this.refreshSelection();
+          this.cb.onSelectCard(index);
+          btn.classList.add('dragging');
+          this.createGhost(index, moveEv.clientX, moveEv.clientY);
+        }
+        this.moveGhost(moveEv.clientX, moveEv.clientY);
+      };
+
+      const release = (upEv: PointerEvent) => {
+        const d = this.dragState;
+        if (!d || d.index !== index || d.pointerId !== upEv.pointerId) return;
+
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', release);
+        window.removeEventListener('pointercancel', release);
+
+        try {
+          btn.releasePointerCapture(upEv.pointerId);
+        } catch {
+          /* já solto */
+        }
+
+        if (d.dragging) {
+          this.destroyGhost();
+          btn.classList.remove('dragging');
+          this.cb.onDragRelease(upEv.clientX, upEv.clientY);
+          setTimeout(() => {
+            this.suppressClick = false;
+          }, 0);
+        }
+        this.dragState = null;
+      };
+
+      // Igual ao deck builder: o dedo sai do botão e passa pelo canvas.
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', release);
+      window.addEventListener('pointercancel', release);
+    });
   }
 
   private createGhost(index: number, x: number, y: number) {

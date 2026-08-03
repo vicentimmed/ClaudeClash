@@ -211,6 +211,7 @@ body {
   background: transparent;
   font-family: inherit;
   cursor: pointer;
+  touch-action: none;
 }
 
 .card-face {

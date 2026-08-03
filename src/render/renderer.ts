@@ -233,6 +233,20 @@ export class Renderer {
     if (this.host) this.layout();
   }
 
+  /** Ola + confete da plateia a partir de um ponto do tabuleiro (tiles). */
+  celebrateCrowd(
+    tileX = ARENA.width / 2,
+    tileY = ARENA.height / 2,
+    confettiColor = 0xe8c45a,
+  ) {
+    if (!this.crowdEnabled) return;
+    const [sx, sy] = this.toScreen(tileX, tileY);
+    this.crowd.cheer(sx, sy);
+    for (const p of this.crowd.confettiPoints(7)) {
+      this.burst(p.x, p.y, confettiColor, 8, this.tile * 0.12, 1.5, { lift: 2.6, spread: 0.7 });
+    }
+  }
+
   /** Fit the 18x32 board into the available box, squashing vertically for a 2.5D feel. */
   layout() {
     const w = this.host.clientWidth;
@@ -1208,12 +1222,7 @@ export class Renderer {
           this.hitStop = 0.09;
           // a plateia vai ao delírio, com a ola partindo da torre que caiu
           if (this.crowdEnabled) {
-            this.crowd.cheer(sx, sy);
-            // `fx.team` é o dono da torre destruída — quem comemora é o outro
-            const color = TEAM_COLOR[fx.team === 0 ? 1 : 0];
-            for (const p of this.crowd.confettiPoints(7)) {
-              this.burst(p.x, p.y, color, 8, this.tile * 0.12, 1.5, { lift: 2.6, spread: 0.7 });
-            }
+            this.celebrateCrowd(fx.x, fx.y, TEAM_COLOR[fx.team === 0 ? 1 : 0]);
           }
           break;
         }
